@@ -26,6 +26,12 @@ pub trait McpServer: Send + Sync {
         }
     }
 
+    /// Whether this implementation supports a server-to-client SSE stream.
+    /// Stateless request/response servers should leave the default disabled.
+    fn supports_server_sent_events(&self) -> bool {
+        false
+    }
+
     fn tools(&self) -> Vec<ToolDefinition>;
 
     async fn call_tool(

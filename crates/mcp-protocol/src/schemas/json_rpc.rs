@@ -1,9 +1,11 @@
 use super::json_payload::JsonPayload;
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize};
+use serde_json::value::RawValue;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RequestId {
+    Null,
     Number(i64),
     String(String),
 }
@@ -25,6 +27,13 @@ pub struct JsonRpcNotification {
     pub params: Option<JsonPayload>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub enum JsonRpcMessage {
+    Request(JsonRpcRequest),
+    Notification(JsonRpcNotification),
+    Response(JsonRpcResponse),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,
@@ -33,6 +42,24 @@ pub struct JsonRpcResponse {
     pub result: Option<JsonPayload>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<JsonRpcError>,
+}
+
+impl<'de> Deserialize<'de> for JsonRpcMessage {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = Box::<RawValue>::deserialize(deserializer)?;
+        if let Ok(request) = serde_json::from_str::<JsonRpcRequest>(raw.get()) {
+            return Ok(Self::Request(request));
+        }
+        if let Ok(notification) = serde_json::from_str::<JsonRpcNotification>(raw.get()) {
+            return Ok(Self::Notification(notification));
+        }
+        serde_json::from_str::<JsonRpcResponse>(raw.get())
+            .map(Self::Response)
+            .map_err(D::Error::custom)
+    }
 }
 
 impl JsonRpcResponse {
@@ -91,6 +118,14 @@ impl JsonRpcError {
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
             code: -32603,
+            message: message.into(),
+            data: None,
+        }
+    }
+
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            code: -32001,
             message: message.into(),
             data: None,
         }

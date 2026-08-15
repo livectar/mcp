@@ -12,3 +12,9 @@ mcp-sdk = { path = "../mcp-sdk" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+mcp-ping = { path = "../../servers/ping" }
+mcp-testkit = { path = "../mcp-testkit" }
+tower.workspace = true
