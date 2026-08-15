@@ -161,7 +161,7 @@ async fn dispatch_request_inner(
     let context = RequestContext::new(request.id.clone(), state.caller, state.services);
     let result = match request.method.as_str() {
         "initialize" => initialize(&server, request.params),
-        "tools/list" => list_tools(&server, request.params),
+        "tools/list" => list_tools(&server, request.params, &state.limits),
         "tools/call" => call_tool(&server, &context, request.params, &state.limits).await,
         method => Err(JsonRpcError::method_not_found(method)),
     };
@@ -233,19 +233,59 @@ fn initialize(
 fn list_tools(
     server: &Arc<dyn McpServer>,
     params: Option<JsonPayload>,
+    limits: &TransportLimits,
 ) -> Result<JsonPayload, JsonRpcError> {
-    if let Some(params) = params {
-        let _: ListToolsParams = params
-            .decode()
-            .map_err(|error| JsonRpcError::invalid_params(error.to_string()))?;
-    }
+    let params = params
+        .map(|params| {
+            params
+                .decode::<ListToolsParams>()
+                .map_err(|error| JsonRpcError::invalid_params(error.to_string()))
+        })
+        .transpose()?;
     let mut tools = server.tools();
     tools.sort_by(|left, right| left.name.cmp(&right.name));
+    let start = params
+        .as_ref()
+        .and_then(|params| params.cursor.as_deref())
+        .map(ToolCursor::decode)
+        .transpose()?
+        .map(|cursor| cursor.offset)
+        .unwrap_or(0);
+    if start > tools.len() {
+        return Err(JsonRpcError::invalid_params(
+            "tools/list cursor is outside the available tool pages",
+        ));
+    }
+    let end = start
+        .saturating_add(limits.max_tools_per_page)
+        .min(tools.len());
+    let next_cursor = (end < tools.len()).then(|| ToolCursor { offset: end }.encode());
     JsonPayload::from_serializable(&ListToolsResult {
-        tools,
-        next_cursor: None,
+        tools: tools.into_iter().skip(start).take(end - start).collect(),
+        next_cursor,
     })
     .map_err(|error| JsonRpcError::internal(error.to_string()))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ToolCursor {
+    offset: usize,
+}
+
+impl ToolCursor {
+    fn decode(value: &str) -> Result<Self, JsonRpcError> {
+        if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(JsonRpcError::invalid_params("tools/list cursor is invalid"));
+        }
+        let offset = value.parse::<usize>().map_err(|_| {
+            JsonRpcError::invalid_params("tools/list cursor is outside the supported range")
+        })?;
+        Ok(Self { offset })
+    }
+
+    fn encode(self) -> String {
+        self.offset.to_string()
+    }
 }
 
 async fn call_tool(

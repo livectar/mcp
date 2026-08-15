@@ -11,6 +11,10 @@ use mcp_sdk::{
 
 use crate::handlers::ping::PingHandler;
 
+pub const SERVER_NAME: &str = "mcp-ping";
+pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const PING_SERVER_KEY: &str = "ping";
+
 pub struct PingServer {
     handler: PingHandler,
 }
@@ -33,8 +37,8 @@ impl Default for PingServer {
 impl McpServer for PingServer {
     fn info(&self) -> ImplementationInfo {
         ImplementationInfo {
-            name: "mcp-ping".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            name: SERVER_NAME.to_string(),
+            version: SERVER_VERSION.to_string(),
         }
     }
 
@@ -64,7 +68,12 @@ impl McpServer for PingServer {
 mod tests {
     use super::*;
     use mcp_protocol::schemas::{json_payload::JsonPayload, json_rpc::RequestId};
-    use mcp_testkit::fixtures::host::TestHost;
+    use mcp_testkit::{contracts::assert_server_contract, fixtures::host::TestHost};
+
+    #[test]
+    fn ping_satisfies_the_public_server_contract() {
+        assert_server_contract(&PingServer::new());
+    }
 
     #[tokio::test]
     async fn ping_returns_typed_structured_content() {
@@ -91,6 +100,30 @@ mod tests {
             context.request_id,
             RequestId::String("ping-test".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn ping_rejects_invalid_typed_arguments() {
+        let server = PingServer::new();
+        let host = TestHost::new();
+        let context = host.context("invalid-ping-test");
+        let arguments = JsonPayload::parse(r#"{"message":42}"#).unwrap();
+
+        let error = server
+            .call_tool(
+                &context,
+                CallToolParams {
+                    name: "ping".to_string(),
+                    arguments: Some(arguments),
+                },
+            )
+            .await
+            .expect_err("invalid message type must fail explicitly");
+
+        assert!(matches!(
+            error,
+            mcp_sdk::errors::ServerError::InvalidArguments(_)
+        ));
     }
 
     #[test]

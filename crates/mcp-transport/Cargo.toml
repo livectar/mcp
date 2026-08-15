@@ -15,6 +15,7 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 mcp-ping = { path = "../../servers/ping" }
 mcp-testkit = { path = "../mcp-testkit" }
 tower.workspace = true

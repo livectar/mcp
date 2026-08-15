@@ -30,3 +30,35 @@ impl fmt::Debug for ServerKey {
         formatter.debug_tuple("ServerKey").field(&self.0).finish()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ServerKey;
+
+    #[test]
+    fn accepts_only_single_segment_registry_identifiers() {
+        for value in ["ping", "google-sheets", "server_01", "-"] {
+            assert!(ServerKey::parse(value).is_some(), "{value} should be valid");
+        }
+    }
+
+    #[test]
+    fn rejects_urls_paths_queries_and_traversal_segments() {
+        for value in [
+            "",
+            "https://example.test",
+            "example.test/path",
+            "/../ping",
+            "..",
+            "ping?next=1",
+            "ping#fragment",
+            "ping%2Fother",
+            "नाम",
+        ] {
+            assert!(
+                ServerKey::parse(value).is_none(),
+                "{value} should be invalid"
+            );
+        }
+    }
+}
