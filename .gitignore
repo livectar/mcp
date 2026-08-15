@@ -1,0 +1,17 @@
+# Rust build artifacts
+/target/
+
+# Rust compiler/editor backup files
+**/*.rs.bk
+
+# Windows build artifacts
+*.pdb
+
+# Local editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Keep Cargo.lock tracked for reproducible workspace builds.

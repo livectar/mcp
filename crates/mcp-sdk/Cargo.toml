@@ -1,0 +1,12 @@
+[package]
+name = "mcp-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+mcp-protocol = { path = "../mcp-protocol" }
+serde.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,26 @@
+[workspace]
+members = [
+    "crates/mcp-protocol",
+    "crates/mcp-sdk",
+    "crates/mcp-transport",
+    "crates/mcp-testkit",
+    "servers/ping",
+    "servers/google",
+    "servers/telegram",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/livectar/mcp"
+
+[workspace.dependencies]
+async-trait = "0.1"
+axum = "0.7"
+http = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }

@@ -1,0 +1,11 @@
+[package]
+name = "mcp-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+mcp-protocol = { path = "../mcp-protocol" }
+mcp-sdk = { path = "../mcp-sdk" }
