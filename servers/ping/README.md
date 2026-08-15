@@ -37,6 +37,31 @@ No provider credential is required. The host still supplies authorization and
 approval services through `mcp-sdk`; the server does not store credentials or
 select connections.
 
+## AI Social plugin JSON
+
+Import this JSON into the AI Social plugin catalog, publish it, and install
+it from workspace settings:
+
+```json
+{
+  "schema_version": 1,
+  "apps": [
+    {
+      "app_key": "ai-social-ping",
+      "name": "AI Social Ping",
+      "description": "Local MCP ping server for development checks.",
+      "icon_url": null,
+      "category": "development",
+      "transport": "streamable_http",
+      "server_url": "http://127.0.0.1:4200/mcp/ping",
+      "auth_type": "none",
+      "oauth": null,
+      "config": {}
+    }
+  ]
+}
+```
+
 ## Usage
 
 Call the tool through MCP with business arguments only:
