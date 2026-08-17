@@ -30,6 +30,9 @@ pub(crate) async fn get(
     if let Err(response) = validate_origin(&state, &headers) {
         return response;
     }
+    if let Err(response) = authenticate(&state, &server_key, &headers).await {
+        return response;
+    }
     if !server.supports_server_sent_events() {
         return method_not_allowed("GET");
     }
@@ -53,5 +56,26 @@ pub(crate) async fn delete(
     if let Err(response) = validate_origin(&state, &headers) {
         return response;
     }
+    if let Err(response) = authenticate(&state, &server_key, &headers).await {
+        return response;
+    }
     method_not_allowed("DELETE")
+}
+
+async fn authenticate(
+    state: &super::state::TransportState,
+    server_key: &str,
+    headers: &HeaderMap,
+) -> Result<(), Response<Body>> {
+    let Some(resolver) = &state.caller_resolver else {
+        return Ok(());
+    };
+    let authorization = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+    resolver
+        .resolve(server_key, authorization)
+        .await
+        .map(|_| ())
+        .map_err(|_| text_response(StatusCode::UNAUTHORIZED, "MCP caller authentication failed"))
 }

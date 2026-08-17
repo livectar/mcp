@@ -14,6 +14,20 @@ pub trait WorkspaceContext: Send + Sync {
     async fn caller(&self) -> Result<CallerContext, HostError>;
 }
 
+/// Resolves the authenticated caller for one incoming MCP request.
+///
+/// Implementations own authentication and installation binding. The
+/// transport passes only the route key and authorization header; tool
+/// arguments are never used as an identity source.
+#[async_trait]
+pub trait CallerContextResolver: Send + Sync {
+    async fn resolve(
+        &self,
+        server_key: &str,
+        authorization: Option<&str>,
+    ) -> Result<CallerContext, HostError>;
+}
+
 #[async_trait]
 pub trait CredentialResolver: Send + Sync {
     async fn resolve(

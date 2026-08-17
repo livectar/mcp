@@ -60,6 +60,11 @@ pub(crate) async fn dispatch(
         return response;
     }
 
+    let caller = match resolve_caller(&state, &server_key, &headers).await {
+        Ok(caller) => caller,
+        Err(response) => return response,
+    };
+
     let message = match parse_message(&body) {
         Ok(message) => message,
         Err(error) => {
@@ -78,9 +83,9 @@ pub(crate) async fn dispatch(
     }
 
     match message {
-        JsonRpcMessage::Request(request) => dispatch_request(state, server, request).await,
+        JsonRpcMessage::Request(request) => dispatch_request(state, caller, server, request).await,
         JsonRpcMessage::Notification(notification) => {
-            dispatch_notification(state, server, notification).await
+            dispatch_notification(state, caller, server, notification).await
         }
         JsonRpcMessage::Response(response) => {
             if response.jsonrpc != "2.0" {
@@ -96,6 +101,30 @@ pub(crate) async fn dispatch(
     }
 }
 
+async fn resolve_caller(
+    state: &TransportState,
+    server_key: &str,
+    headers: &HeaderMap,
+) -> Result<mcp_sdk::schemas::caller::CallerContext, Response<Body>> {
+    let Some(resolver) = &state.caller_resolver else {
+        return Ok(state.caller.clone());
+    };
+    let authorization = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+    resolver
+        .resolve(server_key, authorization)
+        .await
+        .map_err(|_| {
+            rpc_error_response(
+                StatusCode::UNAUTHORIZED,
+                RequestId::Null,
+                JsonRpcError::unauthorized("MCP caller authentication failed"),
+                state.limits.max_response_bytes,
+            )
+        })
+}
+
 pub(crate) fn resolve_server(
     state: &TransportState,
     raw_server_key: &str,
@@ -106,6 +135,7 @@ pub(crate) fn resolve_server(
 
 async fn dispatch_request(
     state: TransportState,
+    caller: mcp_sdk::schemas::caller::CallerContext,
     server: Arc<dyn McpServer>,
     request: JsonRpcRequest,
 ) -> Response<Body> {
@@ -127,7 +157,7 @@ async fn dispatch_request(
                 )
             }
         };
-        let response = dispatch_request_inner(state, server, request).await;
+        let response = dispatch_request_inner(state, caller, server, request).await;
         drop(permit);
         response
     };
@@ -146,6 +176,7 @@ async fn dispatch_request(
 
 async fn dispatch_request_inner(
     state: TransportState,
+    caller: mcp_sdk::schemas::caller::CallerContext,
     server: Arc<dyn McpServer>,
     request: JsonRpcRequest,
 ) -> Response<Body> {
@@ -158,7 +189,7 @@ async fn dispatch_request_inner(
         );
     }
 
-    let context = RequestContext::new(request.id.clone(), state.caller, state.services);
+    let context = RequestContext::new(request.id.clone(), caller, state.services);
     let result = match request.method.as_str() {
         "initialize" => initialize(&server, request.params),
         "tools/list" => list_tools(&server, request.params, &state.limits),
@@ -183,6 +214,7 @@ async fn dispatch_request_inner(
 
 async fn dispatch_notification(
     state: TransportState,
+    caller: mcp_sdk::schemas::caller::CallerContext,
     server: Arc<dyn McpServer>,
     notification: JsonRpcNotification,
 ) -> Response<Body> {
@@ -201,7 +233,7 @@ async fn dispatch_notification(
             method: notification.method,
             params: notification.params,
         };
-        let _ = dispatch_request(state, server, request).await;
+        let _ = dispatch_request(state, caller, server, request).await;
     }
 
     accepted_response()

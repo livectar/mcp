@@ -3,6 +3,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum HostError {
+    #[error("caller authentication failed")]
+    CallerAuthenticationFailed,
     #[error("host request is invalid: {0}")]
     InvalidRequest(String),
     #[error("authorization denied")]
