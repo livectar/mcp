@@ -6,6 +6,7 @@ use mcp_protocol::schemas::{
     json_payload::JsonPayload,
     json_rpc::{JsonRpcError, JsonRpcResponse, RequestId},
 };
+use serde::Serialize;
 
 pub(crate) const JSON_CONTENT_TYPE: &str = "application/json";
 
@@ -35,14 +36,15 @@ pub(crate) fn method_not_allowed(method: &str) -> Response<Body> {
     response
 }
 
-pub(crate) fn rpc_success_response(
+pub(crate) fn rpc_success_response<T: Serialize>(
     status: StatusCode,
     id: RequestId,
-    result: JsonPayload,
+    result: T,
     max_response_bytes: usize,
 ) -> Response<Body> {
     serialize_rpc_response(
         status,
+        id.clone(),
         JsonRpcResponse::success(id, result),
         max_response_bytes,
     )
@@ -56,21 +58,35 @@ pub(crate) fn rpc_error_response(
 ) -> Response<Body> {
     serialize_rpc_response(
         status,
-        JsonRpcResponse::failure(id, error),
+        id.clone(),
+        JsonRpcResponse::<JsonPayload>::failure(id, error),
         max_response_bytes,
     )
 }
 
-fn serialize_rpc_response(
+pub(crate) fn rpc_result_response<T: Serialize>(
     status: StatusCode,
-    response: JsonRpcResponse,
+    id: RequestId,
+    result: Result<T, JsonRpcError>,
+    max_response_bytes: usize,
+) -> Response<Body> {
+    match result {
+        Ok(result) => rpc_success_response(status, id, result, max_response_bytes),
+        Err(error) => rpc_error_response(status, id, error, max_response_bytes),
+    }
+}
+
+fn serialize_rpc_response<T: Serialize>(
+    status: StatusCode,
+    id: RequestId,
+    response: T,
     max_response_bytes: usize,
 ) -> Response<Body> {
     let bytes = match serde_json::to_vec(&response) {
         Ok(bytes) if bytes.len() <= max_response_bytes => bytes,
         _ => {
-            let fallback = serde_json::to_vec(&JsonRpcResponse::failure(
-                response.id,
+            let fallback = serde_json::to_vec(&JsonRpcResponse::<JsonPayload>::failure(
+                id,
                 JsonRpcError::internal("MCP response exceeds the configured size limit"),
             ))
             .unwrap_or_default();

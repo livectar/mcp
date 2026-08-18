@@ -28,3 +28,6 @@ cargo build --workspace
 The protocol revision for this initial workspace is `2025-06-18`. Changes to
 wire contracts or public traits require a compatibility note and a versioned
 release.
+
+All server implementations must follow the repository pagination and lossless
+read contract in [`docs/pagination.md`](docs/pagination.md).

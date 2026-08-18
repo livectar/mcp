@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use mcp_protocol::schemas::{
     json_payload::JsonPayload,
-    tools::{CallToolResult, ContentBlock, ToolAnnotations, ToolDefinition},
+    tools::{CallToolResult, ContentBlock},
 };
 use mcp_sdk::{
     errors::ServerError,
@@ -9,6 +9,8 @@ use mcp_sdk::{
         authorization::{ApprovalDecision, AuthorizationRequest, OperationName},
         context::RequestContext,
         credentials::ProviderName,
+        tool_definition::{ToolAnnotations, ToolDefinition},
+        tool_schema::ToolInputSchema,
     },
     traits::server::ToolHandler,
 };
@@ -32,8 +34,7 @@ impl ToolHandler for TelegramIdentityHandler {
         ToolDefinition {
             name: "telegram_get_identity".to_string(),
             description: "Return the identity for the configured Telegram connection.".to_string(),
-            input_schema: JsonPayload::parse(r#"{"type":"object","additionalProperties":false}"#)
-                .expect("Telegram schema must be valid JSON"),
+            input_schema: ToolInputSchema::object(&[], &[]),
             annotations: ToolAnnotations {
                 read_only_hint: Some(true),
             },

@@ -10,12 +10,17 @@ use mcp_protocol::schemas::{
     json_payload::JsonPayload,
     json_rpc::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId},
     lifecycle::{ClientCapabilities, ImplementationInfo, InitializeParams, InitializeResult},
-    tools::{
-        CallToolParams, CallToolResult, ContentBlock, ListToolsParams, ListToolsResult,
-        ToolAnnotations, ToolDefinition,
-    },
+    tools::{CallToolParams, CallToolResult, ContentBlock, ListToolsParams, ListToolsResult},
 };
-use mcp_sdk::{errors::ServerError, schemas::context::RequestContext, traits::server::McpServer};
+use mcp_sdk::{
+    errors::{ServerError, ToolRegistryError},
+    schemas::{
+        context::RequestContext,
+        tool_definition::{ToolAnnotations, ToolDefinition},
+        tool_schema::ToolInputSchema,
+    },
+    traits::server::McpServer,
+};
 use mcp_testkit::fixtures::host::TestHost;
 use mcp_transport::{
     dispatch::streamable_http::{
@@ -40,8 +45,8 @@ impl McpServerResolver for PingResolver {
     }
 }
 
-fn transport_config(host: TestHost) -> TransportConfig {
-    transport_config_with_server(host, Arc::new(PingServer::new()))
+fn transport_config(host: TestHost) -> Result<TransportConfig, ToolRegistryError> {
+    PingServer::new().map(|server| transport_config_with_server(host, Arc::new(server)))
 }
 
 fn transport_config_with_server(host: TestHost, server: Arc<dyn McpServer>) -> TransportConfig {
@@ -52,8 +57,8 @@ fn transport_config_with_server(host: TestHost, server: Arc<dyn McpServer>) -> T
     )
 }
 
-fn transport() -> Router {
-    McpTransport::new(transport_config(TestHost::new())).router()
+fn transport() -> Result<Router, ToolRegistryError> {
+    transport_config(TestHost::new()).map(|config| McpTransport::new(config).router())
 }
 
 fn headers(request: Request<Body>, method: &str) -> Request<Body> {
@@ -96,8 +101,8 @@ async fn body<T: serde::de::DeserializeOwned>(response: Response<Body>) -> T {
 }
 
 #[tokio::test]
-async fn serves_initialize_notification_list_and_call_lifecycle() {
-    let router = transport();
+async fn serves_initialize_notification_list_and_call_lifecycle() -> Result<(), ToolRegistryError> {
+    let router = transport()?;
     let initialize_params = JsonPayload::from_serializable(&InitializeParams {
         protocol_version: PROTOCOL_REVISION.to_string(),
         capabilities: ClientCapabilities {
@@ -129,7 +134,7 @@ async fn serves_initialize_notification_list_and_call_lifecycle() {
         .expect("initialize result decodes");
     assert_eq!(result.protocol_version, PROTOCOL_REVISION);
 
-    let notification = JsonRpcNotification {
+    let notification = JsonRpcNotification::<JsonPayload> {
         jsonrpc: "2.0".to_string(),
         method: "notifications/initialized".to_string(),
         params: None,
@@ -198,11 +203,12 @@ async fn serves_initialize_notification_list_and_call_lifecycle() {
         .decode()
         .expect("structured result decodes");
     assert_eq!(structured.message, "hello");
+    Ok(())
 }
 
 #[tokio::test]
-async fn rejects_unknown_servers_and_stateless_session_methods() {
-    let router = transport();
+async fn rejects_unknown_servers_and_stateless_session_methods() -> Result<(), ToolRegistryError> {
+    let router = transport()?;
     let request = Request::get("/mcp").body(Body::empty()).unwrap();
     let response = router.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
@@ -221,12 +227,13 @@ async fn rejects_unknown_servers_and_stateless_session_methods() {
     let request = Request::delete("/mcp/ping").body(Body::empty()).unwrap();
     let response = router.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    Ok(())
 }
 
 #[tokio::test]
-async fn validates_method_and_origin_headers() {
+async fn validates_method_and_origin_headers() -> Result<(), ToolRegistryError> {
     let host = TestHost::new();
-    let mut config = transport_config(host.clone());
+    let mut config = transport_config(host.clone())?;
     config.allowed_origins = vec!["https://client.example".to_string()];
     let router = McpTransport::new(config).router();
     let request = headers(
@@ -247,6 +254,7 @@ async fn validates_method_and_origin_headers() {
     );
     let response = router.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    Ok(())
 }
 
 struct PagedServer {
@@ -280,8 +288,7 @@ impl McpServer for PagedServer {
             .map(|name| ToolDefinition {
                 name: name.to_string(),
                 description: "transport test tool".to_string(),
-                input_schema: JsonPayload::parse(r#"{"type":"object"}"#)
-                    .expect("fixture schema is valid"),
+                input_schema: ToolInputSchema::object(&[], &[]),
                 annotations: ToolAnnotations::default(),
             })
             .collect()
@@ -306,7 +313,7 @@ impl McpServer for PagedServer {
     }
 }
 
-fn list_request(id: i64, cursor: Option<&str>) -> JsonRpcRequest {
+fn list_request(id: i64, cursor: Option<&str>) -> JsonRpcRequest<JsonPayload> {
     JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
         id: RequestId::Number(id),
@@ -320,7 +327,7 @@ fn list_request(id: i64, cursor: Option<&str>) -> JsonRpcRequest {
     }
 }
 
-fn call_request(name: &str) -> JsonRpcRequest {
+fn call_request(name: &str) -> JsonRpcRequest<JsonPayload> {
     JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
         id: RequestId::Number(1),
@@ -452,8 +459,7 @@ impl McpServer for FailureServer {
         vec![ToolDefinition {
             name: "scenario".to_string(),
             description: "transport failure fixture".to_string(),
-            input_schema: JsonPayload::parse(r#"{"type":"object"}"#)
-                .expect("fixture schema is valid"),
+            input_schema: ToolInputSchema::object(&[], &[]),
             annotations: ToolAnnotations::default(),
         }]
     }

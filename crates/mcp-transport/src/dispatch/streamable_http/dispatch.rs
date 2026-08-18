@@ -1,6 +1,10 @@
 use super::{
     headers::{validate_content_headers, validate_mcp_headers, validate_origin},
-    response::{accepted_response, rpc_error_response, rpc_success_response, text_response},
+    requests::{
+        parse_message, CallToolRequest, DispatchRequest, IncomingMessage, IncomingNotification,
+        MessageParseError,
+    },
+    response::{accepted_response, rpc_error_response, rpc_result_response, text_response},
     state::TransportState,
 };
 use crate::schemas::{limits::TransportLimits, server_key::ServerKey};
@@ -12,12 +16,9 @@ use mcp_protocol::schemas::json_payload::JsonPayload;
 use mcp_protocol::{
     constants::PROTOCOL_REVISION,
     schemas::{
-        json_rpc::{
-            JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
-            RequestId,
-        },
+        json_rpc::{JsonRpcError, RequestId},
         lifecycle::{InitializeParams, InitializeResult},
-        tools::{CallToolParams, ListToolsParams, ListToolsResult},
+        tools::{ListToolsParams, ListToolsResult},
     },
 };
 use mcp_sdk::{
@@ -67,27 +68,34 @@ pub(crate) async fn dispatch(
 
     let message = match parse_message(&body) {
         Ok(message) => message,
-        Err(error) => {
+        Err(MessageParseError::InvalidRequest(error)) => {
             return rpc_error_response(
                 StatusCode::BAD_REQUEST,
                 RequestId::Null,
-                JsonRpcError::invalid_request(format!("invalid JSON-RPC request: {error}")),
+                error,
                 state.limits.max_response_bytes,
             )
         }
+        Err(MessageParseError::InvalidParams { id, error }) => {
+            return rpc_error_response(StatusCode::OK, id, error, state.limits.max_response_bytes)
+        }
     };
 
-    let method = message_method(&message);
-    if let Err(response) = validate_mcp_headers(&headers, &server, method, &message) {
+    if let Err(response) = validate_mcp_headers(
+        &headers,
+        &server,
+        message.method(),
+        message.initialize_params(),
+    ) {
         return response;
     }
 
     match message {
-        JsonRpcMessage::Request(request) => dispatch_request(state, caller, server, request).await,
-        JsonRpcMessage::Notification(notification) => {
+        IncomingMessage::Request(request) => dispatch_request(state, caller, server, request).await,
+        IncomingMessage::Notification(notification) => {
             dispatch_notification(state, caller, server, notification).await
         }
-        JsonRpcMessage::Response(response) => {
+        IncomingMessage::Response(response) => {
             if response.jsonrpc != "2.0" {
                 return rpc_error_response(
                     StatusCode::BAD_REQUEST,
@@ -137,9 +145,9 @@ async fn dispatch_request(
     state: TransportState,
     caller: mcp_sdk::schemas::caller::CallerContext,
     server: Arc<dyn McpServer>,
-    request: JsonRpcRequest,
+    request: DispatchRequest,
 ) -> Response<Body> {
-    let request_id = request.id.clone();
+    let request_id = request.id().clone();
     let limits = Arc::clone(&state.limits);
     let concurrency = Arc::clone(&state.concurrency);
     let unavailable_request_id = request_id.clone();
@@ -178,35 +186,45 @@ async fn dispatch_request_inner(
     state: TransportState,
     caller: mcp_sdk::schemas::caller::CallerContext,
     server: Arc<dyn McpServer>,
-    request: JsonRpcRequest,
+    request: DispatchRequest,
 ) -> Response<Body> {
-    if request.jsonrpc != "2.0" {
+    let request_id = request.id().clone();
+    if request.jsonrpc() != "2.0" {
         return rpc_error_response(
             StatusCode::OK,
-            request.id,
+            request_id,
             JsonRpcError::invalid_request("jsonrpc must be 2.0"),
             state.limits.max_response_bytes,
         );
     }
 
-    let context = RequestContext::new(request.id.clone(), caller, state.services);
-    let result = match request.method.as_str() {
-        "initialize" => initialize(&server, request.params),
-        "tools/list" => list_tools(&server, request.params, &state.limits),
-        "tools/call" => call_tool(&server, &context, request.params, &state.limits).await,
-        method => Err(JsonRpcError::method_not_found(method)),
-    };
-    match result {
-        Ok(result) => rpc_success_response(
+    let context = RequestContext::new(request_id.clone(), caller, state.services);
+    match request {
+        DispatchRequest::Initialize { params, .. } => rpc_result_response(
             StatusCode::OK,
-            request.id,
-            result,
+            request_id,
+            initialize(&server, params),
             state.limits.max_response_bytes,
         ),
-        Err(error) => rpc_error_response(
+        DispatchRequest::ListTools { params, .. } => rpc_result_response(
             StatusCode::OK,
-            request.id,
-            error,
+            request_id,
+            list_tools(&server, params, &state.limits),
+            state.limits.max_response_bytes,
+        ),
+        DispatchRequest::CallTool { request, .. } => {
+            let result = call_tool(&server, &context, request, &state.limits).await;
+            rpc_result_response(
+                StatusCode::OK,
+                request_id,
+                result,
+                state.limits.max_response_bytes,
+            )
+        }
+        DispatchRequest::Unknown { method, .. } => rpc_error_response(
+            StatusCode::OK,
+            request_id,
+            JsonRpcError::method_not_found(&method),
             state.limits.max_response_bytes,
         ),
     }
@@ -216,64 +234,45 @@ async fn dispatch_notification(
     state: TransportState,
     caller: mcp_sdk::schemas::caller::CallerContext,
     server: Arc<dyn McpServer>,
-    notification: JsonRpcNotification,
+    notification: IncomingNotification,
 ) -> Response<Body> {
-    if notification.jsonrpc != "2.0" {
+    if notification.jsonrpc() != "2.0" {
         return text_response(StatusCode::BAD_REQUEST, "jsonrpc must be 2.0");
     }
 
-    if notification.method == "notifications/initialized" {
-        return accepted_response();
+    match notification {
+        IncomingNotification::Initialized { .. }
+        | IncomingNotification::Other { .. }
+        | IncomingNotification::Ignored { .. } => accepted_response(),
+        IncomingNotification::CallTool { request, .. } => {
+            let _ = dispatch_request(state, caller, server, request).await;
+            accepted_response()
+        }
     }
-
-    if notification.method == "tools/call" {
-        let request = JsonRpcRequest {
-            jsonrpc: notification.jsonrpc,
-            id: RequestId::Null,
-            method: notification.method,
-            params: notification.params,
-        };
-        let _ = dispatch_request(state, caller, server, request).await;
-    }
-
-    accepted_response()
 }
 
 fn initialize(
     server: &Arc<dyn McpServer>,
-    params: Option<JsonPayload>,
-) -> Result<JsonPayload, JsonRpcError> {
-    let params =
-        params.ok_or_else(|| JsonRpcError::invalid_params("initialize params are required"))?;
-    let params: InitializeParams = params
-        .decode()
-        .map_err(|error| JsonRpcError::invalid_params(error.to_string()))?;
+    params: InitializeParams,
+) -> Result<InitializeResult, JsonRpcError> {
     if params.protocol_version != PROTOCOL_REVISION {
         return Err(JsonRpcError::invalid_params(format!(
             "unsupported MCP protocol version: {}",
             params.protocol_version
         )));
     }
-    JsonPayload::from_serializable(&InitializeResult {
+    Ok(InitializeResult {
         protocol_version: PROTOCOL_REVISION.to_string(),
         capabilities: server.capabilities(),
         server_info: server.info(),
     })
-    .map_err(|error| JsonRpcError::internal(error.to_string()))
 }
 
 fn list_tools(
     server: &Arc<dyn McpServer>,
-    params: Option<JsonPayload>,
+    params: Option<ListToolsParams>,
     limits: &TransportLimits,
-) -> Result<JsonPayload, JsonRpcError> {
-    let params = params
-        .map(|params| {
-            params
-                .decode::<ListToolsParams>()
-                .map_err(|error| JsonRpcError::invalid_params(error.to_string()))
-        })
-        .transpose()?;
+) -> Result<ListToolsResult, JsonRpcError> {
     let mut tools = server.tools();
     tools.sort_by(|left, right| left.name.cmp(&right.name));
     let start = params
@@ -292,11 +291,14 @@ fn list_tools(
         .saturating_add(limits.max_tools_per_page)
         .min(tools.len());
     let next_cursor = (end < tools.len()).then(|| ToolCursor { offset: end }.encode());
-    JsonPayload::from_serializable(&ListToolsResult {
-        tools: tools.into_iter().skip(start).take(end - start).collect(),
-        next_cursor,
-    })
-    .map_err(|error| JsonRpcError::internal(error.to_string()))
+    let tools = tools
+        .into_iter()
+        .skip(start)
+        .take(end - start)
+        .map(|tool| tool.into_protocol())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| JsonRpcError::internal(format!("invalid tool schema: {error}")))?;
+    Ok(ListToolsResult { tools, next_cursor })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,20 +325,15 @@ impl ToolCursor {
 async fn call_tool(
     server: &Arc<dyn McpServer>,
     context: &RequestContext,
-    params: Option<JsonPayload>,
+    request: CallToolRequest,
     limits: &TransportLimits,
 ) -> Result<JsonPayload, JsonRpcError> {
-    let params =
-        params.ok_or_else(|| JsonRpcError::invalid_params("tools/call params are required"))?;
-    if params.as_str().len() > limits.max_tool_input_bytes {
+    if request.input_bytes > limits.max_tool_input_bytes {
         return Err(JsonRpcError::invalid_params(
             "tool input exceeds the configured size limit",
         ));
     }
-    let params: CallToolParams = params
-        .decode()
-        .map_err(|error| JsonRpcError::invalid_params(error.to_string()))?;
-    let result = server.call_tool(context, params).await;
+    let result = server.call_tool(context, request.params).await;
     let result = match result {
         Ok(result) => result,
         Err(error @ ServerError::ToolNotFound(_))
@@ -366,23 +363,5 @@ fn server_error(error: ServerError) -> JsonRpcError {
         ServerError::Host(message) => JsonRpcError::internal(message.to_string()),
         ServerError::Provider(message) => JsonRpcError::internal(message),
         ServerError::Protocol(message) => JsonRpcError::internal(message),
-    }
-}
-
-fn parse_message(body: &[u8]) -> Result<JsonRpcMessage, serde_json::Error> {
-    if let Ok(request) = serde_json::from_slice::<JsonRpcRequest>(body) {
-        return Ok(JsonRpcMessage::Request(request));
-    }
-    if let Ok(notification) = serde_json::from_slice::<JsonRpcNotification>(body) {
-        return Ok(JsonRpcMessage::Notification(notification));
-    }
-    serde_json::from_slice::<JsonRpcResponse>(body).map(JsonRpcMessage::Response)
-}
-
-fn message_method(message: &JsonRpcMessage) -> Option<&str> {
-    match message {
-        JsonRpcMessage::Request(request) => Some(request.method.as_str()),
-        JsonRpcMessage::Notification(notification) => Some(notification.method.as_str()),
-        JsonRpcMessage::Response(_) => None,
     }
 }

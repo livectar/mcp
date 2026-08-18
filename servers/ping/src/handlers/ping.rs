@@ -1,21 +1,23 @@
 use async_trait::async_trait;
 use mcp_protocol::schemas::{
     json_payload::JsonPayload,
-    tools::{CallToolResult, ContentBlock, ToolAnnotations, ToolDefinition},
+    tools::{CallToolResult, ContentBlock},
 };
 use mcp_sdk::{
     errors::ServerError,
     schemas::{
         authorization::{ApprovalDecision, AuthorizationRequest, OperationName},
         context::RequestContext,
+        tool_definition::{ToolAnnotations, ToolDefinition},
+        tool_schema::{ToolInputProperty, ToolInputSchema},
     },
     traits::server::ToolHandler,
 };
 
 use crate::schemas::ping::{PingArguments, PingResult};
 
-const PING_SCHEMA: &str =
-    r#"{"type":"object","properties":{"message":{"type":"string"}},"additionalProperties":false}"#;
+const PING_SCHEMA: ToolInputSchema =
+    ToolInputSchema::object(&[], &[ToolInputProperty::string("message", None, None)]);
 
 pub struct PingHandler;
 
@@ -25,7 +27,7 @@ impl ToolHandler for PingHandler {
         ToolDefinition {
             name: "ping".to_string(),
             description: "Return a deterministic response from the MCP server.".to_string(),
-            input_schema: JsonPayload::parse(PING_SCHEMA).expect("ping schema must be valid JSON"),
+            input_schema: PING_SCHEMA,
             annotations: ToolAnnotations {
                 read_only_hint: Some(true),
             },

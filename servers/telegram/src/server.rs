@@ -1,26 +1,26 @@
 use async_trait::async_trait;
 use mcp_protocol::schemas::{
     lifecycle::{ImplementationInfo, ServerCapabilities},
-    tools::{CallToolParams, CallToolResult, ToolDefinition},
+    tools::{CallToolParams, CallToolResult},
 };
 use mcp_sdk::{
-    errors::ServerError,
-    schemas::context::RequestContext,
-    traits::server::{McpServer, ToolHandler},
+    errors::{ServerError, ToolRegistryError},
+    schemas::{context::RequestContext, tool_definition::ToolDefinition},
+    traits::{server::McpServer, tool_registry::ToolRegistry},
 };
 use std::sync::Arc;
 
 use crate::{handlers::identity::TelegramIdentityHandler, providers::telegram::TelegramProvider};
 
 pub struct TelegramServer {
-    handler: TelegramIdentityHandler,
+    tools: ToolRegistry,
 }
 
 impl TelegramServer {
-    pub fn new(provider: Arc<dyn TelegramProvider>) -> Self {
-        Self {
-            handler: TelegramIdentityHandler::new(provider),
-        }
+    pub fn new(provider: Arc<dyn TelegramProvider>) -> Result<Self, ToolRegistryError> {
+        Ok(Self {
+            tools: ToolRegistry::try_new(vec![Arc::new(TelegramIdentityHandler::new(provider))])?,
+        })
     }
 }
 
@@ -40,7 +40,7 @@ impl McpServer for TelegramServer {
     }
 
     fn tools(&self) -> Vec<ToolDefinition> {
-        vec![self.handler.definition()]
+        self.tools.definitions()
     }
 
     async fn call_tool(
@@ -48,10 +48,7 @@ impl McpServer for TelegramServer {
         context: &RequestContext,
         request: CallToolParams,
     ) -> Result<CallToolResult, ServerError> {
-        if request.name != "telegram_get_identity" {
-            return Err(ServerError::ToolNotFound(request.name));
-        }
-        self.handler.call(context, request.arguments).await
+        self.tools.call(context, request).await
     }
 }
 
@@ -103,7 +100,7 @@ mod tests {
 
     #[tokio::test]
     async fn provider_receives_host_injected_credential() {
-        let server = TelegramServer::new(Arc::new(MockTelegram));
+        let server = TelegramServer::new(Arc::new(MockTelegram)).unwrap();
         let services = mcp_sdk::schemas::context::HostServices {
             credentials: Arc::new(MockCredentialResolver),
             authorization: Arc::new(AllowAllAuthorization),

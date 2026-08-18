@@ -2,6 +2,12 @@ use mcp_protocol::schemas::tools::{CallToolResult, ContentBlock};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+pub enum ToolRegistryError {
+    #[error("duplicate MCP tool name: {0}")]
+    DuplicateToolName(String),
+}
+
+#[derive(Debug, Error)]
 pub enum HostError {
     #[error("caller authentication failed")]
     CallerAuthenticationFailed,

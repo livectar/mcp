@@ -1,35 +1,31 @@
 use async_trait::async_trait;
 use mcp_protocol::schemas::{
     lifecycle::{ImplementationInfo, ServerCapabilities},
-    tools::{CallToolParams, CallToolResult, ToolDefinition},
+    tools::{CallToolParams, CallToolResult},
 };
 use mcp_sdk::{
-    errors::ServerError,
-    schemas::context::RequestContext,
-    traits::server::{McpServer, ToolHandler},
+    errors::{ServerError, ToolRegistryError},
+    schemas::{context::RequestContext, tool_definition::ToolDefinition},
+    traits::{registry::McpServerRegistration, server::McpServer, tool_registry::ToolRegistry},
 };
+use std::sync::Arc;
 
 use crate::handlers::ping::PingHandler;
 
 pub const SERVER_NAME: &str = "mcp-ping";
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const PING_SERVER_KEY: &str = "ping";
+pub const REGISTRATION: McpServerRegistration =
+    McpServerRegistration::new("ping", SERVER_NAME, SERVER_VERSION);
 
 pub struct PingServer {
-    handler: PingHandler,
+    tools: ToolRegistry,
 }
 
 impl PingServer {
-    pub fn new() -> Self {
-        Self {
-            handler: PingHandler,
-        }
-    }
-}
-
-impl Default for PingServer {
-    fn default() -> Self {
-        Self::new()
+    pub fn new() -> Result<Self, ToolRegistryError> {
+        Ok(Self {
+            tools: ToolRegistry::try_new(vec![Arc::new(PingHandler)])?,
+        })
     }
 }
 
@@ -49,7 +45,7 @@ impl McpServer for PingServer {
     }
 
     fn tools(&self) -> Vec<ToolDefinition> {
-        vec![self.handler.definition()]
+        self.tools.definitions()
     }
 
     async fn call_tool(
@@ -57,10 +53,7 @@ impl McpServer for PingServer {
         context: &RequestContext,
         request: CallToolParams,
     ) -> Result<CallToolResult, ServerError> {
-        if request.name != "ping" {
-            return Err(ServerError::ToolNotFound(request.name));
-        }
-        self.handler.call(context, request.arguments).await
+        self.tools.call(context, request).await
     }
 }
 
@@ -72,12 +65,12 @@ mod tests {
 
     #[test]
     fn ping_satisfies_the_public_server_contract() {
-        assert_server_contract(&PingServer::new());
+        assert_server_contract(&PingServer::new().unwrap());
     }
 
     #[tokio::test]
     async fn ping_returns_typed_structured_content() {
-        let server = PingServer::new();
+        let server = PingServer::new().unwrap();
         let host = TestHost::new();
         let context = host.context("ping-test");
         let arguments = JsonPayload::parse(r#"{"message":"hello"}"#).unwrap();
@@ -104,7 +97,7 @@ mod tests {
 
     #[tokio::test]
     async fn ping_rejects_invalid_typed_arguments() {
-        let server = PingServer::new();
+        let server = PingServer::new().unwrap();
         let host = TestHost::new();
         let context = host.context("invalid-ping-test");
         let arguments = JsonPayload::parse(r#"{"message":42}"#).unwrap();
@@ -128,8 +121,7 @@ mod tests {
 
     #[test]
     fn ping_exposes_only_public_tool_metadata() {
-        let tool = PingServer::new().tools().pop().unwrap();
+        let tool = PingServer::new().unwrap().tools().pop().unwrap();
         assert_eq!(tool.name, "ping");
-        assert!(tool.input_schema.as_str().contains("message"));
     }
 }

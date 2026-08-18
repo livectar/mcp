@@ -1,8 +1,11 @@
-use crate::{errors::ServerError, schemas::context::RequestContext};
+use crate::{
+    errors::ServerError,
+    schemas::{context::RequestContext, tool_definition::ToolDefinition},
+};
 use async_trait::async_trait;
 use mcp_protocol::schemas::{
     lifecycle::{ImplementationInfo, ServerCapabilities},
-    tools::{CallToolParams, CallToolResult, ToolDefinition},
+    tools::{CallToolParams, CallToolResult},
 };
 
 #[async_trait]

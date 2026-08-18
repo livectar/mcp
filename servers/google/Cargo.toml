@@ -7,10 +7,15 @@ repository = "https://github.com/livectar/mcp"
 
 [dependencies]
 async-trait.workspace = true
+base64.workspace = true
 mcp-protocol = { path = "../../crates/mcp-protocol" }
 mcp-sdk = { path = "../../crates/mcp-sdk" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
 serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
 mcp-testkit = { path = "../../crates/mcp-testkit" }
-tokio.workspace = true

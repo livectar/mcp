@@ -1,26 +1,45 @@
 use async_trait::async_trait;
 use mcp_protocol::schemas::{
     lifecycle::{ImplementationInfo, ServerCapabilities},
-    tools::{CallToolParams, CallToolResult, ToolDefinition},
+    tools::{CallToolParams, CallToolResult},
 };
 use mcp_sdk::{
-    errors::ServerError,
-    schemas::context::RequestContext,
-    traits::server::{McpServer, ToolHandler},
+    errors::{ServerError, ToolRegistryError},
+    schemas::{context::RequestContext, tool_definition::ToolDefinition},
+    traits::{registry::McpServerRegistration, server::McpServer, tool_registry::ToolRegistry},
 };
 use std::sync::Arc;
 
-use crate::{handlers::identity::GoogleIdentityHandler, providers::google::GoogleProvider};
+use crate::{
+    handlers::{
+        drive::list_spreadsheets::ListSpreadsheetsHandler,
+        sheet::{
+            get_spreadsheet::GetSpreadsheetHandler, read_cell_text::ReadCellTextHandler,
+            read_range::ReadRangeHandler, read_sheet_metadata::ReadSheetMetadataHandler,
+        },
+    },
+    providers::common::GoogleProvider,
+};
+
+pub const SERVER_NAME: &str = "mcp-google";
+pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const REGISTRATION: McpServerRegistration =
+    McpServerRegistration::new("google", SERVER_NAME, SERVER_VERSION);
 
 pub struct GoogleServer {
-    handler: GoogleIdentityHandler,
+    tools: ToolRegistry,
 }
 
 impl GoogleServer {
-    pub fn new(provider: Arc<dyn GoogleProvider>) -> Self {
-        Self {
-            handler: GoogleIdentityHandler::new(provider),
-        }
+    pub fn new(provider: Arc<dyn GoogleProvider>) -> Result<Self, ToolRegistryError> {
+        let tools = ToolRegistry::try_new(vec![
+            Arc::new(ListSpreadsheetsHandler::new(Arc::clone(&provider))),
+            Arc::new(GetSpreadsheetHandler::new(Arc::clone(&provider))),
+            Arc::new(ReadCellTextHandler::new(Arc::clone(&provider))),
+            Arc::new(ReadRangeHandler::new(Arc::clone(&provider))),
+            Arc::new(ReadSheetMetadataHandler::new(provider)),
+        ])?;
+        Ok(Self { tools })
     }
 }
 
@@ -28,8 +47,8 @@ impl GoogleServer {
 impl McpServer for GoogleServer {
     fn info(&self) -> ImplementationInfo {
         ImplementationInfo {
-            name: "mcp-google".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            name: SERVER_NAME.to_string(),
+            version: SERVER_VERSION.to_string(),
         }
     }
 
@@ -40,7 +59,7 @@ impl McpServer for GoogleServer {
     }
 
     fn tools(&self) -> Vec<ToolDefinition> {
-        vec![self.handler.definition()]
+        self.tools.definitions()
     }
 
     async fn call_tool(
@@ -48,88 +67,33 @@ impl McpServer for GoogleServer {
         context: &RequestContext,
         request: CallToolParams,
     ) -> Result<CallToolResult, ServerError> {
-        if request.name != "google_get_identity" {
-            return Err(ServerError::ToolNotFound(request.name));
-        }
-        self.handler.call(context, request.arguments).await
+        self.tools.call(context, request).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
-    use mcp_sdk::{
-        errors::HostError,
-        schemas::{
-            caller::CallerContext,
-            credentials::{CredentialRequest, ProviderCredential, ProviderName},
-        },
-        traits::host::CredentialResolver,
-    };
-    use mcp_testkit::doubles::{
-        approvals::AllowAllApprovals, audit::RecordingAuditSink,
-        authorization::AllowAllAuthorization,
-    };
+    use crate::providers::common::GoogleApiClient;
 
-    struct MockGoogle;
-
-    #[async_trait]
-    impl GoogleProvider for MockGoogle {
-        async fn get_identity(
-            &self,
-            credential: &ProviderCredential,
-        ) -> Result<crate::schemas::identity::GoogleIdentity, String> {
-            assert_eq!(credential.expose_secret(), "mock-google-token");
-            Ok(crate::schemas::identity::GoogleIdentity {
-                display_name: "Mock Google".to_string(),
-            })
-        }
-    }
-
-    struct MockCredentialResolver;
-
-    #[async_trait]
-    impl CredentialResolver for MockCredentialResolver {
-        async fn resolve(
-            &self,
-            _caller: &CallerContext,
-            request: &CredentialRequest,
-        ) -> Result<ProviderCredential, HostError> {
-            assert_eq!(request.provider, ProviderName::new("google").unwrap());
-            ProviderCredential::new("mock-google-token")
-        }
-    }
-
-    #[tokio::test]
-    async fn provider_receives_host_injected_credential() {
-        let server = GoogleServer::new(Arc::new(MockGoogle));
-        let services = mcp_sdk::schemas::context::HostServices {
-            credentials: Arc::new(MockCredentialResolver),
-            authorization: Arc::new(AllowAllAuthorization),
-            approvals: Arc::new(AllowAllApprovals),
-            audit: Arc::new(RecordingAuditSink::default()),
-        };
-        let context = RequestContext::new(
-            mcp_protocol::schemas::json_rpc::RequestId::String("google-test".to_string()),
-            CallerContext {
-                tenant_id: "tenant".to_string(),
-                subject_id: "subject".to_string(),
-                installation_id: None,
-                connection_id: None,
-            },
-            services,
+    #[test]
+    fn registers_the_phase_one_read_tools() {
+        let server = GoogleServer::new(Arc::new(GoogleApiClient::default())).unwrap();
+        let mut names = server
+            .tools()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "sheets_get_spreadsheet",
+                "sheets_list_spreadsheets",
+                "sheets_read_cell_text",
+                "sheets_read_range",
+                "sheets_read_sheet_metadata",
+            ]
         );
-        let result = server
-            .call_tool(
-                &context,
-                CallToolParams {
-                    name: "google_get_identity".to_string(),
-                    arguments: None,
-                },
-            )
-            .await
-            .unwrap();
-        assert!(!result.is_error);
     }
 }

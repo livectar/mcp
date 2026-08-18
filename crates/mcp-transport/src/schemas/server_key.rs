@@ -37,7 +37,7 @@ mod tests {
 
     #[test]
     fn accepts_only_single_segment_registry_identifiers() {
-        for value in ["ping", "google-sheets", "server_01", "-"] {
+        for value in ["ping", "google", "server_01", "-"] {
             assert!(ServerKey::parse(value).is_some(), "{value} should be valid");
         }
     }

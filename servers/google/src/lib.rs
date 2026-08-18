@@ -1,5 +1,6 @@
 //! Google provider boundary with host-injected credentials.
 
+pub mod errors;
 pub mod handlers;
 pub mod providers;
 pub mod schemas;

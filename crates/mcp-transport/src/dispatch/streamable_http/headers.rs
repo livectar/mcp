@@ -3,10 +3,7 @@ use axum::{
     body::Body,
     http::{header, HeaderMap, Response, StatusCode},
 };
-use mcp_protocol::{
-    constants::PROTOCOL_REVISION,
-    schemas::{json_rpc::JsonRpcMessage, lifecycle::InitializeParams},
-};
+use mcp_protocol::{constants::PROTOCOL_REVISION, schemas::lifecycle::InitializeParams};
 use mcp_sdk::traits::server::McpServer;
 use std::sync::Arc;
 
@@ -54,7 +51,7 @@ pub(crate) fn validate_mcp_headers(
     headers: &HeaderMap,
     server: &Arc<dyn McpServer>,
     method: Option<&str>,
-    message: &JsonRpcMessage,
+    initialize_params: Option<&InitializeParams>,
 ) -> Result<(), Response<Body>> {
     if let Some(header_method) = header_string(headers, "Mcp-Method")? {
         if method != Some(header_method.as_str()) {
@@ -74,15 +71,9 @@ pub(crate) fn validate_mcp_headers(
     }
     if let Some(protocol_header) = protocol_header {
         if method == Some("initialize") {
-            let body_version = match message {
-                JsonRpcMessage::Request(request) => request
-                    .params
-                    .as_ref()
-                    .and_then(|params| params.decode::<InitializeParams>().ok())
-                    .map(|params| params.protocol_version),
-                _ => None,
-            };
-            if body_version.as_deref() != Some(protocol_header.as_str()) {
+            if initialize_params.map(|params| params.protocol_version.as_str())
+                != Some(protocol_header.as_str())
+            {
                 return Err(text_response(
                     StatusCode::BAD_REQUEST,
                     "MCP-Protocol-Version does not match initialize params",
