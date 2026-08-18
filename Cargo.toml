@@ -6,7 +6,7 @@ members = [
     "crates/mcp-testkit",
     "servers/ping",
     "servers/google",
-    "servers/telegram",
+    "servers/telegram-bot",
 ]
 resolver = "2"
 

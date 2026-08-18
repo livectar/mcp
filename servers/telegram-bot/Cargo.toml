@@ -1,5 +1,5 @@
 [package]
-name = "mcp-telegram"
+name = "mcp-telegram-bot"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
@@ -10,7 +10,12 @@ async-trait.workspace = true
 mcp-protocol = { path = "../../crates/mcp-protocol" }
 mcp-sdk = { path = "../../crates/mcp-sdk" }
 serde.workspace = true
+teloxide = { version = "0.17.0", default-features = false, features = ["rustls"] }
+thiserror.workspace = true
+reqwest.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
 mcp-testkit = { path = "../../crates/mcp-testkit" }
+serde_json.workspace = true
 tokio.workspace = true

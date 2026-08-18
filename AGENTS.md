@@ -185,6 +185,8 @@ responses.
 ## Testing
 
 - Keep unit tests beside the module they exercise.
+- Keep integration tests in the package-level `tests/` directory using the
+  same path convention, for example `servers/<provider>/tests/`.
 - Put cross-module and HTTP contract tests under `tests/` or a dedicated test
   module.
 - Provider tests must use mocked provider clients and host services; live
@@ -226,3 +228,8 @@ Credential values, OAuth tokens, phone codes, 2FA passwords, and session data
 must never be committed to a server README. Tool examples must contain only
 business arguments; credential selection and secret injection remain internal
 host behavior.
+
+Use `servers/README.template.md` as the documentation structure for new and
+updated provider servers. It is based on the canonical Google server README;
+keep provider-specific details while preserving the Goal/overview, Tools,
+Credentials and scopes, Usage, and Tests sections.
