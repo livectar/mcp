@@ -1,21 +1,16 @@
-use async_trait::async_trait;
 use mcp_sdk::schemas::credentials::ProviderCredential;
-use reqwest::{header::HeaderValue, Client, StatusCode, Url};
-use serde::de::DeserializeOwned;
+use reqwest::{header::HeaderValue, Client, Method, StatusCode, Url};
+use serde::{de::DeserializeOwned, Serialize};
 use std::{sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 use crate::{
-    errors::{GoogleErrorAction, GoogleErrorCategory, GoogleProviderError},
+    errors::{
+        GoogleErrorAction, GoogleErrorCategory, GoogleMutationOperation, GoogleProviderError,
+    },
     schemas::{
-        cells::{ReadCellTextResult, ReadRangeResult},
         identifiers::limits::{CellLimit, PageSize},
-        provider::GoogleErrorEnvelope,
-        requests::{
-            GetSpreadsheetRequest, ListSpreadsheetsRequest, ReadCellTextRequest, ReadRangeRequest,
-            ReadSheetMetadataRequest,
-        },
-        results::{ListSpreadsheetsResult, SheetMetadataResult, SpreadsheetMetadataResult},
+        provider::errors::GoogleErrorEnvelope,
         scopes::{GoogleScope, GoogleSheetsScopeProfile},
     },
 };
@@ -24,6 +19,7 @@ pub const DEFAULT_SHEETS_API_BASE_URL: &str = "https://sheets.googleapis.com/v4/
 pub const DEFAULT_DRIVE_API_BASE_URL: &str = "https://www.googleapis.com/drive/v3/";
 pub(crate) const MAX_SAFE_RESULT_CELLS: u32 = 500;
 pub(crate) const MAX_CELL_TEXT_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_SAFE_MUTATION_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct GoogleClientConfig {
@@ -157,6 +153,111 @@ impl GoogleApiClient {
         credential: &ProviderCredential,
         operation: &'static str,
     ) -> Result<T, GoogleProviderError> {
+        self.request_json(
+            Method::GET,
+            service,
+            path,
+            query,
+            None,
+            credential,
+            operation,
+            MutationRetryPolicy::Safe,
+        )
+        .await
+    }
+
+    pub(crate) async fn post_json<T: DeserializeOwned, B: Serialize>(
+        &self,
+        service: ApiService,
+        path: &str,
+        query: Vec<(&str, String)>,
+        body: &B,
+        credential: &ProviderCredential,
+        operation: &'static str,
+        retry_policy: MutationRetryPolicy,
+    ) -> Result<T, GoogleProviderError> {
+        self.request_with_body(
+            Method::POST,
+            service,
+            path,
+            query,
+            body,
+            credential,
+            operation,
+            retry_policy,
+        )
+        .await
+    }
+
+    pub(crate) async fn put_json<T: DeserializeOwned, B: Serialize>(
+        &self,
+        service: ApiService,
+        path: &str,
+        query: Vec<(&str, String)>,
+        body: &B,
+        credential: &ProviderCredential,
+        operation: &'static str,
+    ) -> Result<T, GoogleProviderError> {
+        self.request_with_body(
+            Method::PUT,
+            service,
+            path,
+            query,
+            body,
+            credential,
+            operation,
+            MutationRetryPolicy::Safe,
+        )
+        .await
+    }
+
+    async fn request_with_body<T: DeserializeOwned, B: Serialize>(
+        &self,
+        method: Method,
+        service: ApiService,
+        path: &str,
+        query: Vec<(&str, String)>,
+        body: &B,
+        credential: &ProviderCredential,
+        operation: &'static str,
+        retry_policy: MutationRetryPolicy,
+    ) -> Result<T, GoogleProviderError> {
+        let body =
+            serde_json::to_string(body).map_err(|error| GoogleProviderError::InvalidResponse {
+                message: format!(
+                    "{operation} request could not be serialized: {}",
+                    bounded_message(error.to_string())
+                ),
+            })?;
+        if body.len() > MAX_SAFE_MUTATION_REQUEST_BYTES {
+            return Err(GoogleProviderError::RequestTooLarge {
+                max_bytes: MAX_SAFE_MUTATION_REQUEST_BYTES,
+            });
+        }
+        self.request_json(
+            method,
+            service,
+            path,
+            query,
+            Some(body),
+            credential,
+            operation,
+            retry_policy,
+        )
+        .await
+    }
+
+    async fn request_json<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        service: ApiService,
+        path: &str,
+        query: Vec<(&str, String)>,
+        body: Option<String>,
+        credential: &ProviderCredential,
+        operation: &'static str,
+        retry_policy: MutationRetryPolicy,
+    ) -> Result<T, GoogleProviderError> {
         let base_url = match service {
             ApiService::Sheets => &self.sheets_api_base_url,
             ApiService::Drive => &self.drive_api_base_url,
@@ -166,12 +267,22 @@ impl GoogleApiClient {
             .map_err(|_| GoogleProviderError::InvalidResponse {
                 message: "Google API request path is invalid".to_string(),
             })?;
-        let attempts = u32::from(self.config.max_retries) + 1;
+        let attempts = match retry_policy {
+            MutationRetryPolicy::Safe => u32::from(self.config.max_retries) + 1,
+            MutationRetryPolicy::NonIdempotent { .. } => 1,
+        };
         let mut attempt = 0_u32;
         loop {
             attempt += 1;
             match self
-                .get_json_once(&url, &query, credential, operation)
+                .request_json_once(
+                    method.clone(),
+                    &url,
+                    &query,
+                    body.as_deref(),
+                    credential,
+                    operation,
+                )
                 .await
             {
                 Ok(value) => return Ok(value),
@@ -184,17 +295,35 @@ impl GoogleApiClient {
                     sleep(delay).await;
                 }
                 Err(error) if error.retryable() => {
+                    if let MutationRetryPolicy::NonIdempotent { operation } = retry_policy {
+                        return Err(GoogleProviderError::MutationUncertain {
+                            operation,
+                            message: error.to_string(),
+                        });
+                    }
                     return Err(error.into_retry_exhausted(attempts));
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    if let MutationRetryPolicy::NonIdempotent { operation } = retry_policy {
+                        if error.ambiguous_mutation_failure() {
+                            return Err(GoogleProviderError::MutationUncertain {
+                                operation,
+                                message: error.to_string(),
+                            });
+                        }
+                    }
+                    return Err(error);
+                }
             }
         }
     }
 
-    async fn get_json_once<T: DeserializeOwned>(
+    async fn request_json_once<T: DeserializeOwned>(
         &self,
+        method: Method,
         url: &Url,
         query: &[(&str, String)],
+        body: Option<&str>,
         credential: &ProviderCredential,
         operation: &'static str,
     ) -> Result<T, GoogleProviderError> {
@@ -205,10 +334,12 @@ impl GoogleApiClient {
             })?;
         let response = self
             .http
-            .get(url.clone())
+            .request(method, url.clone())
             .query(query)
             .header(reqwest::header::AUTHORIZATION, authorization)
             .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body.unwrap_or_default().to_string())
             .send()
             .await
             .map_err(|error| {
@@ -266,80 +397,10 @@ pub(crate) enum ApiService {
     Drive,
 }
 
-#[async_trait]
-pub trait GoogleProvider: Send + Sync {
-    async fn list_spreadsheets(
-        &self,
-        credential: &ProviderCredential,
-        request: ListSpreadsheetsRequest,
-    ) -> Result<ListSpreadsheetsResult, GoogleProviderError>;
-
-    async fn get_spreadsheet(
-        &self,
-        credential: &ProviderCredential,
-        request: GetSpreadsheetRequest,
-    ) -> Result<SpreadsheetMetadataResult, GoogleProviderError>;
-
-    async fn read_range(
-        &self,
-        credential: &ProviderCredential,
-        request: ReadRangeRequest,
-    ) -> Result<ReadRangeResult, GoogleProviderError>;
-
-    async fn read_cell_text(
-        &self,
-        credential: &ProviderCredential,
-        request: ReadCellTextRequest,
-    ) -> Result<ReadCellTextResult, GoogleProviderError>;
-
-    async fn read_sheet_metadata(
-        &self,
-        credential: &ProviderCredential,
-        request: ReadSheetMetadataRequest,
-    ) -> Result<SheetMetadataResult, GoogleProviderError>;
-}
-
-#[async_trait]
-impl GoogleProvider for GoogleApiClient {
-    async fn list_spreadsheets(
-        &self,
-        credential: &ProviderCredential,
-        request: ListSpreadsheetsRequest,
-    ) -> Result<ListSpreadsheetsResult, GoogleProviderError> {
-        self.list_spreadsheets_impl(credential, request).await
-    }
-
-    async fn get_spreadsheet(
-        &self,
-        credential: &ProviderCredential,
-        request: GetSpreadsheetRequest,
-    ) -> Result<SpreadsheetMetadataResult, GoogleProviderError> {
-        self.get_spreadsheet_impl(credential, request).await
-    }
-
-    async fn read_range(
-        &self,
-        credential: &ProviderCredential,
-        request: ReadRangeRequest,
-    ) -> Result<ReadRangeResult, GoogleProviderError> {
-        self.read_range_impl(credential, request).await
-    }
-
-    async fn read_cell_text(
-        &self,
-        credential: &ProviderCredential,
-        request: ReadCellTextRequest,
-    ) -> Result<ReadCellTextResult, GoogleProviderError> {
-        self.read_cell_text_impl(credential, request).await
-    }
-
-    async fn read_sheet_metadata(
-        &self,
-        credential: &ProviderCredential,
-        request: ReadSheetMetadataRequest,
-    ) -> Result<SheetMetadataResult, GoogleProviderError> {
-        self.read_sheet_metadata_impl(credential, request).await
-    }
+#[derive(Clone, Copy)]
+pub(crate) enum MutationRetryPolicy {
+    Safe,
+    NonIdempotent { operation: GoogleMutationOperation },
 }
 
 pub(crate) fn map_http_error(

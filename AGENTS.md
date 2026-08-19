@@ -165,6 +165,20 @@ Own provider clients, request construction, pagination, provider error
 mapping, and credential use. Providers receive credentials from the SDK
 context and must not resolve or persist them themselves.
 
+Keep provider files structurally focused:
+
+- One `.rs` file owns one primary implementation struct, trait, or enum.
+- Keep the provider/service implementation separate from paging, conversion,
+  validation, cursor, and response-body helpers.
+- When a provider grows beyond one focused file, use a module directory with
+  declaration-only `mod.rs`; do not create a large catch-all provider file.
+- Keep helper functions in purpose-named helper modules and supporting structs
+  beside their own implementation.
+- Do not add unrelated free functions or supporting types to a provider's core
+  implementation file.
+
+See `CODE_STYLE.md` for the public repository's file-organization examples.
+
 ### Handlers
 
 Own tool-level validation and dispatch. Handlers call provider/services and

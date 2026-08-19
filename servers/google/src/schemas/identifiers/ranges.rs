@@ -1,8 +1,9 @@
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 
 const MAX_RANGE_BYTES: usize = 256;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
 pub struct A1Range(String);
 
 impl A1Range {
@@ -56,6 +57,23 @@ impl A1Range {
             (Some(start_column), Some(end_column), Some(start_row), Some(end_row))
                 if start_column == end_column && start_row == end_row
         )
+    }
+
+    pub fn is_fully_bounded(&self) -> bool {
+        let reference = self
+            .0
+            .split_once('!')
+            .map(|(_, reference)| reference)
+            .unwrap_or(self.as_str());
+        let mut parts = reference.split(':');
+        let Ok(start) = parse_a1_endpoint(parts.next().unwrap_or_default()) else {
+            return false;
+        };
+        let Ok(end) = parts.next().map(parse_a1_endpoint).transpose() else {
+            return false;
+        };
+        let end = end.unwrap_or(start);
+        start.column.is_some() && start.row.is_some() && end.column.is_some() && end.row.is_some()
     }
 
     pub fn subrange(
@@ -134,15 +152,6 @@ impl ResolvedA1RangeBounds {
 
     pub fn column_count(self) -> u32 {
         self.end_column - self.start_column + 1
-    }
-}
-
-impl Serialize for A1Range {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
     }
 }
 

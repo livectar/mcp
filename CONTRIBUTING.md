@@ -4,6 +4,8 @@ Keep this repository host-neutral. Public crates must not import AI Social
 application crates, database entities, assistant workflows, or private
 provider modules.
 
+Read [`CODE_STYLE.md`](CODE_STYLE.md) before adding or expanding a provider.
+
 Before opening a change, run:
 
 ```bash

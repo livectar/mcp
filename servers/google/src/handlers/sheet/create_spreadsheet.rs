@@ -12,43 +12,44 @@ use mcp_sdk::{
 use std::sync::Arc;
 
 use crate::{
-    handlers::common::{authorize_and_credential, decode_required_arguments, success},
+    handlers::{
+        common::{authorize_and_credential, decode_required_arguments, success},
+        sheet::mutation_schema::INITIAL_TAB_PROPERTY,
+    },
     providers::sheets::provider::GoogleSheetsProvider,
-    schemas::requests::sheets_read::GetSpreadsheetRequest,
+    schemas::requests::sheets_mutations::CreateSpreadsheetRequest,
 };
 
-pub const TOOL_NAME: &str = "sheets_get_spreadsheet";
+pub const TOOL_NAME: &str = "sheets_create_spreadsheet";
 
 const INPUT_SCHEMA: ToolInputSchema = ToolInputSchema::object(
-    &["spreadsheet_id"],
-    &[ToolInputProperty::string(
-        "spreadsheet_id",
-        Some(1),
-        Some(256),
-    )],
+    &["title"],
+    &[
+        ToolInputProperty::string("title", Some(1), Some(256)),
+        INITIAL_TAB_PROPERTY,
+    ],
 );
 
-pub struct GetSpreadsheetHandler {
+pub struct CreateSpreadsheetHandler {
     provider: Arc<GoogleSheetsProvider>,
 }
 
-impl GetSpreadsheetHandler {
+impl CreateSpreadsheetHandler {
     pub fn new(provider: Arc<GoogleSheetsProvider>) -> Self {
         Self { provider }
     }
 }
 
 #[async_trait]
-impl ToolHandler for GetSpreadsheetHandler {
+impl ToolHandler for CreateSpreadsheetHandler {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: TOOL_NAME.to_string(),
-            description:
-                "Return Google Sheets spreadsheet metadata and tab identities without grid data."
-                    .to_string(),
+            description: "Create a Google Sheets spreadsheet with an optional initial tab."
+                .to_string(),
             input_schema: INPUT_SCHEMA,
             annotations: ToolAnnotations {
-                read_only_hint: Some(true),
+                read_only_hint: Some(false),
             },
         }
     }
@@ -58,11 +59,15 @@ impl ToolHandler for GetSpreadsheetHandler {
         context: &RequestContext,
         arguments: Option<JsonPayload>,
     ) -> Result<mcp_protocol::schemas::tools::CallToolResult, ServerError> {
-        let request = decode_required_arguments::<GetSpreadsheetRequest>(arguments)?;
+        let request = decode_required_arguments::<CreateSpreadsheetRequest>(arguments)?;
+        request.validate().map_err(ServerError::InvalidArguments)?;
         let credential = authorize_and_credential(context, TOOL_NAME).await?;
-        let result = self.provider.get_spreadsheet(&credential, request).await?;
+        let result = self
+            .provider
+            .create_spreadsheet(&credential, request)
+            .await?;
         success(
-            format!("Read spreadsheet metadata for {}.", result.spreadsheet_id),
+            format!("Created spreadsheet {}.", result.spreadsheet_id),
             &result,
         )
     }

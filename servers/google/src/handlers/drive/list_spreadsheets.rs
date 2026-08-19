@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use crate::{
     handlers::common::{authorize_and_credential, decode_arguments, success},
-    providers::common::GoogleProvider,
-    schemas::{identifiers::limits::PageSize, requests::ListSpreadsheetsRequest},
+    providers::drive::GoogleDriveProvider,
+    schemas::{identifiers::limits::PageSize, requests::drive::ListSpreadsheetsRequest},
 };
 
 pub const TOOL_NAME: &str = "sheets_list_spreadsheets";
@@ -30,11 +30,11 @@ const INPUT_SCHEMA: ToolInputSchema = ToolInputSchema::object(
 );
 
 pub struct ListSpreadsheetsHandler {
-    provider: Arc<dyn GoogleProvider>,
+    provider: Arc<GoogleDriveProvider>,
 }
 
 impl ListSpreadsheetsHandler {
-    pub fn new(provider: Arc<dyn GoogleProvider>) -> Self {
+    pub fn new(provider: Arc<GoogleDriveProvider>) -> Self {
         Self { provider }
     }
 }

@@ -46,6 +46,8 @@ pub enum GoogleProviderError {
     Transport { message: String },
     #[error("google provider response exceeded the {max_bytes}-byte limit")]
     ResponseTooLarge { max_bytes: usize },
+    #[error("google mutation request exceeded the {max_bytes}-byte limit")]
+    RequestTooLarge { max_bytes: usize },
     #[error("google sheet cell at row {row}, column {column} exceeds the {max_bytes}-byte range cell limit; use sheets_read_cell_text for lossless chunks")]
     CellTooLarge {
         row: u32,
@@ -62,6 +64,29 @@ pub enum GoogleProviderError {
         attempts: u32,
         message: String,
     },
+    #[error(
+        "google mutation outcome is uncertain operation={operation}: {message}",
+        operation = operation.as_str()
+    )]
+    MutationUncertain {
+        operation: GoogleMutationOperation,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoogleMutationOperation {
+    CreateSpreadsheet,
+    AppendRows,
+}
+
+impl GoogleMutationOperation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CreateSpreadsheet => "spreadsheets.create",
+            Self::AppendRows => "spreadsheets.values.append",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,6 +145,10 @@ impl GoogleProviderError {
                 attempts,
                 message: redact(message),
             },
+            Self::MutationUncertain { operation, message } => Self::MutationUncertain {
+                operation,
+                message: redact(message),
+            },
             error => error,
         }
     }
@@ -128,6 +157,19 @@ impl GoogleProviderError {
         matches!(
             self,
             Self::Transport { .. }
+                | Self::Api {
+                    category: GoogleErrorCategory::RateLimited | GoogleErrorCategory::Upstream,
+                    ..
+                }
+        )
+    }
+
+    pub(crate) fn ambiguous_mutation_failure(&self) -> bool {
+        matches!(
+            self,
+            Self::Transport { .. }
+                | Self::ResponseTooLarge { .. }
+                | Self::InvalidResponse { .. }
                 | Self::Api {
                     category: GoogleErrorCategory::RateLimited | GoogleErrorCategory::Upstream,
                     ..

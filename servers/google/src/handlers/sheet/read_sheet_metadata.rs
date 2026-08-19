@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use crate::{
     handlers::common::{authorize_and_credential, decode_required_arguments, success},
-    providers::common::GoogleProvider,
-    schemas::requests::ReadSheetMetadataRequest,
+    providers::sheets::provider::GoogleSheetsProvider,
+    schemas::requests::sheets_read::ReadSheetMetadataRequest,
 };
 
 pub const TOOL_NAME: &str = "sheets_read_sheet_metadata";
@@ -29,11 +29,11 @@ const INPUT_SCHEMA: ToolInputSchema = ToolInputSchema::object(
 );
 
 pub struct ReadSheetMetadataHandler {
-    provider: Arc<dyn GoogleProvider>,
+    provider: Arc<GoogleSheetsProvider>,
 }
 
 impl ReadSheetMetadataHandler {
-    pub fn new(provider: Arc<dyn GoogleProvider>) -> Self {
+    pub fn new(provider: Arc<GoogleSheetsProvider>) -> Self {
         Self { provider }
     }
 }

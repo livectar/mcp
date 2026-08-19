@@ -1,29 +1,21 @@
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 
 const MAX_FILTER_BYTES: usize = 256;
 const MAX_QUERY_BYTES: usize = 512;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
 pub struct SpreadsheetNameFilter(String);
 
 impl SpreadsheetNameFilter {
     pub fn new(value: impl Into<String>) -> Result<Self, String> {
         let value = value.into();
-        validate_bounded_text(&value, MAX_FILTER_BYTES, "name_contains")?;
+        validate_filter_value(&value, MAX_FILTER_BYTES, "name_contains")?;
         Ok(Self(value))
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-impl Serialize for SpreadsheetNameFilter {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
     }
 }
 
@@ -36,13 +28,14 @@ impl<'de> Deserialize<'de> for SpreadsheetNameFilter {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
 pub struct DriveQuery(String);
 
 impl DriveQuery {
     pub fn new(value: impl Into<String>) -> Result<Self, String> {
         let value = value.into();
-        validate_bounded_text(&value, MAX_QUERY_BYTES, "query")?;
+        validate_filter_value(&value, MAX_QUERY_BYTES, "query")?;
         if value.contains(';') {
             return Err("query must not contain statement separators".to_string());
         }
@@ -51,15 +44,6 @@ impl DriveQuery {
 
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-impl Serialize for DriveQuery {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
     }
 }
 
@@ -72,7 +56,7 @@ impl<'de> Deserialize<'de> for DriveQuery {
     }
 }
 
-fn validate_bounded_text(value: &str, max_bytes: usize, field: &str) -> Result<(), String> {
+fn validate_filter_value(value: &str, max_bytes: usize, field: &str) -> Result<(), String> {
     if value.is_empty() || value.len() > max_bytes || value.chars().any(char::is_control) {
         return Err(format!(
             "{field} must be non-empty and at most {max_bytes} bytes"

@@ -1,9 +1,10 @@
 # MCP Google Server
 
-`mcp-google` is the provider-facing Google MCP implementation for the Phase 1
-MVP. It currently exposes Google Sheets reads through MCP and uses the Google
-Drive API only for spreadsheet discovery. It does not expose Google REST
-endpoints to callers and does not implement Sheets mutations.
+`mcp-google` is the provider-facing Google MCP implementation for the Sheets
+MVP. It exposes bounded Google Sheets reads and mutations through MCP, and uses
+the Google Drive API only for spreadsheet discovery. It does not expose Google
+REST endpoints to callers. Approval remains the responsibility of the main
+application action policy.
 
 ## Tools
 
@@ -18,12 +19,22 @@ endpoints to callers and does not implement Sheets mutations.
   UTF-8-safe chunks with a continuation cursor.
 - `sheets_read_sheet_metadata` returns tab IDs, titles, grid dimensions, and
   frozen-pane metadata.
+- `sheets_create_spreadsheet` creates a spreadsheet with an optional initial
+  tab configuration.
+- `sheets_write_range` replaces an exact A1 range with a bounded rectangular
+  matrix of typed cells.
+- `sheets_append_rows` appends a bounded typed row matrix. It requires host
+  authorization and does not automatically retry because an uncertain append
+  may have been applied by Google.
+- `sheets_clear_range` clears an exact A1 range.
 
 Read results include spreadsheet identity. Range results additionally include
 the resolved tab identity, the exact requested range, and `next_cursor` when
 more rows or columns remain. Cell output is typed as empty, text, number,
 boolean, or formula. No cell text is truncated; oversized text uses the
-separate chunk tool.
+separate chunk tool. Mutation results include the spreadsheet ID, tab identity,
+applied range when available, outcome, affected cell count, failed cell count,
+and a bounded typed summary.
 
 ## Credentials and scopes
 
@@ -39,10 +50,9 @@ https://www.googleapis.com/auth/spreadsheets.readonly
 https://www.googleapis.com/auth/drive.readonly
 ```
 
-The future mutation profile is declared separately as
-`https://www.googleapis.com/auth/spreadsheets`; no mutation tool requests it
-in this phase. `drive.file` is intentionally not presented as an account-wide
-discovery scope.
+Mutation tools use the separate
+`https://www.googleapis.com/auth/spreadsheets` profile. `drive.file` is
+intentionally not presented as an account-wide discovery scope.
 
 The host owns OAuth authorization, refresh, connection ownership, and secret
 storage. Never place a real token or client secret in this README.
@@ -60,6 +70,7 @@ refresh token in the catalog metadata.
   "token_endpoint": "https://oauth2.googleapis.com/token",
   "scopes": [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.readonly"
   ],
   "pkce_method": "S256",
@@ -77,16 +88,22 @@ Call tools through the MCP transport with business arguments only. For
 example, a range read supplies `spreadsheet_id`, `range`, optional
 `value_rendering`, optional `max_cells`, and then the returned cursor on each
 continuation call; it does not supply a credential. The read is complete only
-when `next_cursor` is absent.
-Authorization and approval are evaluated by the host before every provider
-call, so read tools can run automatically only when the workspace policy
-allows them.
+when `next_cursor` is absent. Mutation calls also use business arguments only;
+callers do not supply an approval token or request reference. Write values use
+the typed cell shape
+`{"kind":"text","value":"hello"}` (or `empty`, `number`, `boolean`, and
+`formula` variants).
+The main application evaluates authorization and its existing workspace
+approval policy before dispatching the MCP call. Auto-approved tools execute
+immediately; confirmation-required tools follow that existing application flow.
 
 Provider responses are bounded by request timeout, response bytes, page size,
-cell count, and per-cell safety checks. Google `401`, missing-scope `403`,
-ordinary permission `403`, `404`, `409`, `429`, and `5xx` responses become safe
-typed categories with reauthorization, permission, identifier, or retry
-guidance. No response bound may silently discard data.
+cell count, mutation request bytes, and per-cell safety checks. Google `401`,
+missing-scope `403`, ordinary permission `403`, `404`, `409`, `429`, and `5xx`
+responses become safe typed categories with reauthorization, permission,
+identifier, or retry guidance. Non-idempotent create and append requests do not
+automatically retry; transport, oversized, and malformed success responses are
+returned as an uncertain mutation. No response bound may silently discard data.
 
 ## Tests
 

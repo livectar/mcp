@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use crate::{
     handlers::common::{authorize_and_credential, decode_required_arguments, success},
-    providers::common::GoogleProvider,
-    schemas::{identifiers::limits::TextChunkSize, requests::ReadCellTextRequest},
+    providers::sheets::provider::GoogleSheetsProvider,
+    schemas::{identifiers::limits::TextChunkSize, requests::sheets_read::ReadCellTextRequest},
 };
 
 pub const TOOL_NAME: &str = "sheets_read_cell_text";
@@ -36,11 +36,11 @@ const INPUT_SCHEMA: ToolInputSchema = ToolInputSchema::object(
 );
 
 pub struct ReadCellTextHandler {
-    provider: Arc<dyn GoogleProvider>,
+    provider: Arc<GoogleSheetsProvider>,
 }
 
 impl ReadCellTextHandler {
-    pub fn new(provider: Arc<dyn GoogleProvider>) -> Self {
+    pub fn new(provider: Arc<GoogleSheetsProvider>) -> Self {
         Self { provider }
     }
 }

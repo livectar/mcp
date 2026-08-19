@@ -14,41 +14,38 @@ use std::sync::Arc;
 use crate::{
     handlers::common::{authorize_and_credential, decode_required_arguments, success},
     providers::sheets::provider::GoogleSheetsProvider,
-    schemas::requests::sheets_read::GetSpreadsheetRequest,
+    schemas::requests::sheets_mutations::ClearRangeRequest,
 };
 
-pub const TOOL_NAME: &str = "sheets_get_spreadsheet";
+pub const TOOL_NAME: &str = "sheets_clear_range";
 
 const INPUT_SCHEMA: ToolInputSchema = ToolInputSchema::object(
-    &["spreadsheet_id"],
-    &[ToolInputProperty::string(
-        "spreadsheet_id",
-        Some(1),
-        Some(256),
-    )],
+    &["spreadsheet_id", "range"],
+    &[
+        ToolInputProperty::string("spreadsheet_id", Some(1), Some(256)),
+        ToolInputProperty::string("range", Some(1), Some(256)),
+    ],
 );
 
-pub struct GetSpreadsheetHandler {
+pub struct ClearRangeHandler {
     provider: Arc<GoogleSheetsProvider>,
 }
 
-impl GetSpreadsheetHandler {
+impl ClearRangeHandler {
     pub fn new(provider: Arc<GoogleSheetsProvider>) -> Self {
         Self { provider }
     }
 }
 
 #[async_trait]
-impl ToolHandler for GetSpreadsheetHandler {
+impl ToolHandler for ClearRangeHandler {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: TOOL_NAME.to_string(),
-            description:
-                "Return Google Sheets spreadsheet metadata and tab identities without grid data."
-                    .to_string(),
+            description: "Clear an exact Google Sheets A1 range.".to_string(),
             input_schema: INPUT_SCHEMA,
             annotations: ToolAnnotations {
-                read_only_hint: Some(true),
+                read_only_hint: Some(false),
             },
         }
     }
@@ -58,11 +55,12 @@ impl ToolHandler for GetSpreadsheetHandler {
         context: &RequestContext,
         arguments: Option<JsonPayload>,
     ) -> Result<mcp_protocol::schemas::tools::CallToolResult, ServerError> {
-        let request = decode_required_arguments::<GetSpreadsheetRequest>(arguments)?;
+        let request = decode_required_arguments::<ClearRangeRequest>(arguments)?;
+        request.validate().map_err(ServerError::InvalidArguments)?;
         let credential = authorize_and_credential(context, TOOL_NAME).await?;
-        let result = self.provider.get_spreadsheet(&credential, request).await?;
+        let result = self.provider.clear_range(&credential, request).await?;
         success(
-            format!("Read spreadsheet metadata for {}.", result.spreadsheet_id),
+            format!("Cleared {} cells.", result.affected_cell_count),
             &result,
         )
     }

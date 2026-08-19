@@ -1,24 +1,14 @@
 use mcp_sdk::schemas::pagination::OpaqueCursor;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    cells::ValueRenderMode,
+use super::super::{
+    cells::values::ValueRenderMode,
     identifiers::{
-        filters::{DriveQuery, SpreadsheetNameFilter},
         ids::SpreadsheetId,
-        limits::{CellLimit, PageSize, TextChunkSize},
+        limits::{CellLimit, TextChunkSize},
         ranges::A1Range,
     },
 };
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ListSpreadsheetsRequest {
-    pub name_contains: Option<SpreadsheetNameFilter>,
-    pub query: Option<DriveQuery>,
-    pub page_size: Option<PageSize>,
-    pub page_cursor: Option<OpaqueCursor>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -1,28 +1,38 @@
 use mcp_sdk::schemas::{credentials::ProviderCredential, pagination::OpaqueCursor};
+use std::sync::Arc;
 
 use crate::{
     errors::GoogleProviderError,
     schemas::{
         identifiers::ids::SpreadsheetId,
-        provider::DriveFilesResponse,
-        requests::ListSpreadsheetsRequest,
-        results::{ListSpreadsheetsResult, SpreadsheetListItem},
+        provider::drive::DriveFilesResponse,
+        requests::drive::ListSpreadsheetsRequest,
+        results::drive::{ListSpreadsheetsResult, SpreadsheetListItem},
     },
 };
 
 use super::common::{escape_drive_literal, invalid_provider_response, ApiService, GoogleApiClient};
 
-impl GoogleApiClient {
-    pub(crate) async fn list_spreadsheets_impl(
+#[derive(Clone)]
+pub struct GoogleDriveProvider {
+    client: Arc<GoogleApiClient>,
+}
+
+impl GoogleDriveProvider {
+    pub fn new(client: Arc<GoogleApiClient>) -> Self {
+        Self { client }
+    }
+
+    pub async fn list_spreadsheets(
         &self,
         credential: &ProviderCredential,
         request: ListSpreadsheetsRequest,
     ) -> Result<ListSpreadsheetsResult, GoogleProviderError> {
         let page_size = request
             .page_size
-            .unwrap_or(self.config.default_page_size)
+            .unwrap_or(self.client.config.default_page_size)
             .get()
-            .min(self.config.max_page_size.get());
+            .min(self.client.config.max_page_size.get());
         let mut clauses = vec![
             "mimeType = 'application/vnd.google-apps.spreadsheet'".to_string(),
             "trashed = false".to_string(),
@@ -48,6 +58,7 @@ impl GoogleApiClient {
             query.push(("pageToken", cursor.as_str().to_string()));
         }
         let response: DriveFilesResponse = self
+            .client
             .get_json(
                 ApiService::Drive,
                 "files",

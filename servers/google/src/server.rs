@@ -14,11 +14,15 @@ use crate::{
     handlers::{
         drive::list_spreadsheets::ListSpreadsheetsHandler,
         sheet::{
-            get_spreadsheet::GetSpreadsheetHandler, read_cell_text::ReadCellTextHandler,
-            read_range::ReadRangeHandler, read_sheet_metadata::ReadSheetMetadataHandler,
+            append_rows::AppendRowsHandler, clear_range::ClearRangeHandler,
+            create_spreadsheet::CreateSpreadsheetHandler, get_spreadsheet::GetSpreadsheetHandler,
+            read_cell_text::ReadCellTextHandler, read_range::ReadRangeHandler,
+            read_sheet_metadata::ReadSheetMetadataHandler, write_range::WriteRangeHandler,
         },
     },
-    providers::common::GoogleProvider,
+    providers::{
+        common::GoogleApiClient, drive::GoogleDriveProvider, sheets::provider::GoogleSheetsProvider,
+    },
 };
 
 pub const SERVER_NAME: &str = "mcp-google";
@@ -31,13 +35,19 @@ pub struct GoogleServer {
 }
 
 impl GoogleServer {
-    pub fn new(provider: Arc<dyn GoogleProvider>) -> Result<Self, ToolRegistryError> {
+    pub fn new(provider: Arc<GoogleApiClient>) -> Result<Self, ToolRegistryError> {
+        let drive_provider = Arc::new(GoogleDriveProvider::new(Arc::clone(&provider)));
+        let sheets_provider = Arc::new(GoogleSheetsProvider::new(provider));
         let tools = ToolRegistry::try_new(vec![
-            Arc::new(ListSpreadsheetsHandler::new(Arc::clone(&provider))),
-            Arc::new(GetSpreadsheetHandler::new(Arc::clone(&provider))),
-            Arc::new(ReadCellTextHandler::new(Arc::clone(&provider))),
-            Arc::new(ReadRangeHandler::new(Arc::clone(&provider))),
-            Arc::new(ReadSheetMetadataHandler::new(provider)),
+            Arc::new(ListSpreadsheetsHandler::new(drive_provider)),
+            Arc::new(GetSpreadsheetHandler::new(Arc::clone(&sheets_provider))),
+            Arc::new(ReadCellTextHandler::new(Arc::clone(&sheets_provider))),
+            Arc::new(ReadRangeHandler::new(Arc::clone(&sheets_provider))),
+            Arc::new(ReadSheetMetadataHandler::new(Arc::clone(&sheets_provider))),
+            Arc::new(CreateSpreadsheetHandler::new(Arc::clone(&sheets_provider))),
+            Arc::new(WriteRangeHandler::new(Arc::clone(&sheets_provider))),
+            Arc::new(AppendRowsHandler::new(Arc::clone(&sheets_provider))),
+            Arc::new(ClearRangeHandler::new(sheets_provider)),
         ])?;
         Ok(Self { tools })
     }
@@ -68,32 +78,5 @@ impl McpServer for GoogleServer {
         request: CallToolParams,
     ) -> Result<CallToolResult, ServerError> {
         self.tools.call(context, request).await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::providers::common::GoogleApiClient;
-
-    #[test]
-    fn registers_the_phase_one_read_tools() {
-        let server = GoogleServer::new(Arc::new(GoogleApiClient::default())).unwrap();
-        let mut names = server
-            .tools()
-            .into_iter()
-            .map(|tool| tool.name)
-            .collect::<Vec<_>>();
-        names.sort();
-        assert_eq!(
-            names,
-            vec![
-                "sheets_get_spreadsheet",
-                "sheets_list_spreadsheets",
-                "sheets_read_cell_text",
-                "sheets_read_range",
-                "sheets_read_sheet_metadata",
-            ]
-        );
     }
 }

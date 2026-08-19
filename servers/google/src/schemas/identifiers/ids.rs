@@ -1,9 +1,10 @@
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use std::fmt;
 
 const MAX_SPREADSHEET_ID_BYTES: usize = 256;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
 pub struct SheetId(u64);
 
 impl SheetId {
@@ -18,15 +19,6 @@ impl SheetId {
     }
 }
 
-impl Serialize for SheetId {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_u64(self.get())
-    }
-}
-
 impl<'de> Deserialize<'de> for SheetId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -36,7 +28,8 @@ impl<'de> Deserialize<'de> for SheetId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
 pub struct SpreadsheetId(String);
 
 impl SpreadsheetId {
@@ -63,15 +56,6 @@ impl SpreadsheetId {
 impl fmt::Display for SpreadsheetId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
-    }
-}
-
-impl Serialize for SpreadsheetId {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
     }
 }
 

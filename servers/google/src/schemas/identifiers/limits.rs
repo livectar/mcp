@@ -1,6 +1,7 @@
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
 pub struct PageSize(u16);
 
 impl PageSize {
@@ -18,15 +19,6 @@ impl PageSize {
     }
 }
 
-impl Serialize for PageSize {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_u16(self.get())
-    }
-}
-
 impl<'de> Deserialize<'de> for PageSize {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -36,7 +28,8 @@ impl<'de> Deserialize<'de> for PageSize {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
 pub struct CellLimit(u32);
 
 impl CellLimit {
@@ -54,7 +47,8 @@ impl CellLimit {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
 pub struct TextChunkSize(u32);
 
 impl TextChunkSize {
@@ -87,30 +81,12 @@ impl Default for TextChunkSize {
     }
 }
 
-impl Serialize for TextChunkSize {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_u32(self.get())
-    }
-}
-
 impl<'de> Deserialize<'de> for TextChunkSize {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         Self::new(u32::deserialize(deserializer)?).map_err(D::Error::custom)
-    }
-}
-
-impl Serialize for CellLimit {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_u32(self.get())
     }
 }
 

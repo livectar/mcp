@@ -1,4 +1,9 @@
+pub mod append_rows;
+pub mod clear_range;
+pub mod create_spreadsheet;
 pub mod get_spreadsheet;
+pub(crate) mod mutation_schema;
 pub mod read_cell_text;
 pub mod read_range;
 pub mod read_sheet_metadata;
+pub mod write_range;
