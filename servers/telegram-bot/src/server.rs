@@ -6,7 +6,7 @@ use mcp_protocol::schemas::{
 use mcp_sdk::{
     errors::{ServerError, ToolRegistryError},
     schemas::{context::RequestContext, tool_definition::ToolDefinition},
-    traits::{server::McpServer, tool_registry::ToolRegistry},
+    traits::{registry::McpServerRegistration, server::McpServer, tool_registry::ToolRegistry},
 };
 use std::sync::Arc;
 
@@ -14,6 +14,11 @@ use crate::{
     handlers::{get_chat::GetChatHandler, get_me::GetMeHandler, send_message::SendMessageHandler},
     providers::telegram_bot::{TelegramBotProvider, TeloxideTelegramBotProvider},
 };
+
+pub const SERVER_NAME: &str = "mcp-telegram-bot";
+pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const REGISTRATION: McpServerRegistration =
+    McpServerRegistration::new("telegram-bot", SERVER_NAME, SERVER_VERSION);
 
 pub struct TelegramBotServer {
     tools: ToolRegistry,
@@ -39,8 +44,8 @@ impl TelegramBotServer {
 impl McpServer for TelegramBotServer {
     fn info(&self) -> ImplementationInfo {
         ImplementationInfo {
-            name: "mcp-telegram-bot".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            name: SERVER_NAME.to_string(),
+            version: SERVER_VERSION.to_string(),
         }
     }
 

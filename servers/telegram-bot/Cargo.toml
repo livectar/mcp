@@ -12,7 +12,7 @@ mcp-sdk = { path = "../../crates/mcp-sdk" }
 serde.workspace = true
 teloxide = { version = "0.17.0", default-features = false, features = ["rustls"] }
 thiserror.workspace = true
-reqwest.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
 
 [dev-dependencies]
 axum.workspace = true
