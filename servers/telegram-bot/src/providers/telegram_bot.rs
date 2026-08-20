@@ -1,17 +1,22 @@
 use async_trait::async_trait;
 use mcp_sdk::schemas::credentials::ProviderCredential;
 use teloxide::{
-    payloads::SendMessageSetters,
+    payloads::{GetUpdatesSetters, SendMessageSetters},
     prelude::Requester,
-    types::{ChatFullInfo, ChatId, ParseMode},
+    types::{AllowedUpdate, ChatId, ParseMode, Recipient},
     Bot,
 };
 
 use crate::{
     errors::TelegramBotError,
     schemas::{
-        requests::{GetChatRequest, SendMessageRequest, TelegramParseMode},
-        results::{TelegramBotIdentity, TelegramChat, TelegramChatKind, TelegramMessage},
+        requests::{
+            GetChatRequest, GetUpdatesRequest, SendMessageRequest, TelegramChatId,
+            TelegramParseMode,
+        },
+        results::{
+            TelegramBotIdentity, TelegramChat, TelegramChatUpdate, TelegramMessage, TelegramUpdates,
+        },
     },
 };
 
@@ -28,6 +33,12 @@ pub trait TelegramBotProvider: Send + Sync {
         request: GetChatRequest,
     ) -> Result<TelegramChat, TelegramBotError>;
 
+    async fn get_updates(
+        &self,
+        credential: &ProviderCredential,
+        request: GetUpdatesRequest,
+    ) -> Result<TelegramUpdates, TelegramBotError>;
+
     async fn send_message(
         &self,
         credential: &ProviderCredential,
@@ -38,6 +49,13 @@ pub trait TelegramBotProvider: Send + Sync {
 pub struct TeloxideTelegramBotProvider {
     api_url: Option<reqwest::Url>,
 }
+
+const CHAT_DISCOVERY_ALLOWED_UPDATES: &[AllowedUpdate] = &[
+    AllowedUpdate::Message,
+    AllowedUpdate::ChannelPost,
+    AllowedUpdate::MyChatMember,
+    AllowedUpdate::ChatMember,
+];
 
 impl TeloxideTelegramBotProvider {
     pub fn new() -> Self {
@@ -91,11 +109,39 @@ impl TelegramBotProvider for TeloxideTelegramBotProvider {
         credential: &ProviderCredential,
         request: GetChatRequest,
     ) -> Result<TelegramChat, TelegramBotError> {
-        let chat = self
-            .bot(credential)
-            .get_chat(ChatId(request.chat_id))
-            .await?;
-        Ok(chat_info_to_schema(&chat))
+        let recipient = to_recipient(&request.chat_id)?;
+        let chat = self.bot(credential).get_chat(recipient).await?;
+        Ok(TelegramChat::from(&chat))
+    }
+
+    async fn get_updates(
+        &self,
+        credential: &ProviderCredential,
+        request: GetUpdatesRequest,
+    ) -> Result<TelegramUpdates, TelegramBotError> {
+        let mut get_updates = self.bot(credential).get_updates();
+        if let Some(offset) = request.offset {
+            get_updates = get_updates.offset(offset);
+        }
+        if let Some(limit) = request.limit {
+            get_updates = get_updates.limit(limit);
+        }
+        get_updates = get_updates.allowed_updates(CHAT_DISCOVERY_ALLOWED_UPDATES.iter().copied());
+        let updates = get_updates.await?;
+        let next_offset = updates.iter().map(|update| update.id.as_offset()).max();
+        let mut chat_updates = Vec::new();
+        let mut ignored_update_count = 0;
+        for update in updates {
+            match TelegramChatUpdate::try_from(&update) {
+                Ok(chat_update) => chat_updates.push(chat_update),
+                Err(_) => ignored_update_count += 1,
+            }
+        }
+        Ok(TelegramUpdates {
+            updates: chat_updates,
+            next_offset,
+            ignored_update_count,
+        })
     }
 
     async fn send_message(
@@ -103,9 +149,8 @@ impl TelegramBotProvider for TeloxideTelegramBotProvider {
         credential: &ProviderCredential,
         request: SendMessageRequest,
     ) -> Result<TelegramMessage, TelegramBotError> {
-        let mut send_message = self
-            .bot(credential)
-            .send_message(ChatId(request.chat_id), request.text);
+        let recipient = to_recipient(&request.chat_id)?;
+        let mut send_message = self.bot(credential).send_message(recipient, request.text);
         if let Some(parse_mode) = request.parse_mode {
             send_message = send_message.parse_mode(to_teloxide_parse_mode(parse_mode));
         }
@@ -119,34 +164,28 @@ impl TelegramBotProvider for TeloxideTelegramBotProvider {
     }
 }
 
+fn to_recipient(chat_id: &TelegramChatId) -> Result<Recipient, TelegramBotError> {
+    chat_id
+        .validate()
+        .map_err(TelegramBotError::InvalidChatId)?;
+
+    match chat_id {
+        TelegramChatId::Numeric(value) => Ok(Recipient::Id(ChatId(*value))),
+        TelegramChatId::Username(value) => {
+            if let Ok(value) = value.parse::<i64>() {
+                return Ok(Recipient::Id(ChatId(value)));
+            }
+
+            let username = value.strip_prefix('@').unwrap_or(value);
+            Ok(Recipient::ChannelUsername(format!("@{username}")))
+        }
+    }
+}
+
 fn to_teloxide_parse_mode(parse_mode: TelegramParseMode) -> ParseMode {
     match parse_mode {
         TelegramParseMode::MarkdownV2 => ParseMode::MarkdownV2,
         TelegramParseMode::Html => ParseMode::Html,
-    }
-}
-
-fn chat_info_to_schema(chat: &ChatFullInfo) -> TelegramChat {
-    let kind = if chat.is_private() {
-        TelegramChatKind::Private
-    } else if chat.is_group() {
-        TelegramChatKind::Group
-    } else if chat.is_supergroup() {
-        TelegramChatKind::Supergroup
-    } else if chat.is_channel() {
-        TelegramChatKind::Channel
-    } else {
-        TelegramChatKind::Unknown
-    };
-
-    TelegramChat {
-        id: chat.id.0,
-        kind,
-        title: chat.title().map(str::to_owned),
-        username: chat.username().map(str::to_owned),
-        first_name: chat.first_name().map(str::to_owned),
-        last_name: chat.last_name().map(str::to_owned),
-        description: chat.description().map(str::to_owned),
     }
 }
 
@@ -234,6 +273,22 @@ mod tests {
         assert_eq!(
             to_teloxide_parse_mode(TelegramParseMode::Html),
             ParseMode::Html
+        );
+    }
+
+    #[test]
+    fn maps_numeric_ids_and_usernames_to_recipients() {
+        assert_eq!(
+            to_recipient(&TelegramChatId::Numeric(-100123)).unwrap(),
+            Recipient::Id(ChatId(-100123))
+        );
+        assert_eq!(
+            to_recipient(&TelegramChatId::Username("example_channel".to_string())).unwrap(),
+            Recipient::ChannelUsername("@example_channel".to_string())
+        );
+        assert_eq!(
+            to_recipient(&TelegramChatId::Username("-100123".to_string())).unwrap(),
+            Recipient::Id(ChatId(-100123))
         );
     }
 }

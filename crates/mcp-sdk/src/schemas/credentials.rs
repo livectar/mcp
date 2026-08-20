@@ -1,5 +1,54 @@
 use crate::errors::HostError;
+use serde::Serialize;
 use std::fmt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialFieldType {
+    Secret,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct CredentialField {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub description: &'static str,
+    pub input_type: CredentialFieldType,
+    pub required: bool,
+}
+
+impl CredentialField {
+    pub const fn secret(key: &'static str, label: &'static str, description: &'static str) -> Self {
+        Self {
+            key,
+            label,
+            description,
+            input_type: CredentialFieldType::Secret,
+            required: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct CredentialRequirements {
+    pub provider: &'static str,
+    pub secret_field: &'static str,
+    pub fields: &'static [CredentialField],
+}
+
+impl CredentialRequirements {
+    pub const fn new(
+        provider: &'static str,
+        secret_field: &'static str,
+        fields: &'static [CredentialField],
+    ) -> Self {
+        Self {
+            provider,
+            secret_field,
+            fields,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderName(String);

@@ -1,3 +1,4 @@
+use crate::schemas::credentials::CredentialRequirements;
 use serde::Serialize;
 
 /// Declarative identity for an MCP server implementation.
@@ -9,11 +10,22 @@ pub struct McpServerRegistration {
     key: &'static str,
     name: &'static str,
     version: &'static str,
+    credential_requirements: Option<CredentialRequirements>,
 }
 
 impl McpServerRegistration {
     pub const fn new(key: &'static str, name: &'static str, version: &'static str) -> Self {
-        Self { key, name, version }
+        Self {
+            key,
+            name,
+            version,
+            credential_requirements: None,
+        }
+    }
+
+    pub const fn with_credentials(mut self, requirements: CredentialRequirements) -> Self {
+        self.credential_requirements = Some(requirements);
+        self
     }
 
     pub const fn key(self) -> &'static str {
@@ -26,5 +38,9 @@ impl McpServerRegistration {
 
     pub const fn version(self) -> &'static str {
         self.version
+    }
+
+    pub const fn credential_requirements(self) -> Option<CredentialRequirements> {
+        self.credential_requirements
     }
 }

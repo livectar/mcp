@@ -16,7 +16,7 @@ use crate::{
     providers::telegram_bot::TelegramBotProvider,
 };
 
-pub const TOOL_NAME: &str = "telegram_get_me";
+pub const TOOL_NAME: &str = "get_me";
 
 pub struct GetMeHandler {
     provider: Arc<dyn TelegramBotProvider>,

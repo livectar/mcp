@@ -5,20 +5,37 @@ use mcp_protocol::schemas::{
 };
 use mcp_sdk::{
     errors::{ServerError, ToolRegistryError},
-    schemas::{context::RequestContext, tool_definition::ToolDefinition},
+    schemas::{
+        context::RequestContext,
+        credentials::{CredentialField, CredentialRequirements},
+        tool_definition::ToolDefinition,
+    },
     traits::{registry::McpServerRegistration, server::McpServer, tool_registry::ToolRegistry},
 };
 use std::sync::Arc;
 
 use crate::{
-    handlers::{get_chat::GetChatHandler, get_me::GetMeHandler, send_message::SendMessageHandler},
+    handlers::{
+        get_chat::GetChatHandler, get_me::GetMeHandler, get_updates::GetUpdatesHandler,
+        send_message::SendMessageHandler,
+    },
     providers::telegram_bot::{TelegramBotProvider, TeloxideTelegramBotProvider},
 };
 
 pub const SERVER_NAME: &str = "mcp-telegram-bot";
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const CREDENTIAL_REQUIREMENTS: CredentialRequirements = CredentialRequirements::new(
+    "telegram-bot",
+    "bot_token",
+    &[CredentialField::secret(
+        "bot_token",
+        "Bot token",
+        "A secret token issued by the provider's bot management service.",
+    )],
+);
 pub const REGISTRATION: McpServerRegistration =
-    McpServerRegistration::new("telegram-bot", SERVER_NAME, SERVER_VERSION);
+    McpServerRegistration::new("telegram-bot", SERVER_NAME, SERVER_VERSION)
+        .with_credentials(CREDENTIAL_REQUIREMENTS);
 
 pub struct TelegramBotServer {
     tools: ToolRegistry,
@@ -30,6 +47,7 @@ impl TelegramBotServer {
             tools: ToolRegistry::try_new(vec![
                 Arc::new(GetMeHandler::new(Arc::clone(&provider))),
                 Arc::new(GetChatHandler::new(Arc::clone(&provider))),
+                Arc::new(GetUpdatesHandler::new(Arc::clone(&provider))),
                 Arc::new(SendMessageHandler::new(provider)),
             ])?,
         })

@@ -20,10 +20,15 @@ use mcp_telegram_bot::{
     errors::TelegramBotError,
     providers::telegram_bot::TelegramBotProvider,
     schemas::{
-        requests::{GetChatRequest, SendMessageRequest, TelegramParseMode},
-        results::{TelegramBotIdentity, TelegramChat, TelegramChatKind, TelegramMessage},
+        requests::{
+            GetChatRequest, GetUpdatesRequest, SendMessageRequest, TelegramChatId,
+            TelegramParseMode,
+        },
+        results::{
+            TelegramBotIdentity, TelegramChat, TelegramChatKind, TelegramMessage, TelegramUpdates,
+        },
     },
-    server::TelegramBotServer,
+    server::{TelegramBotServer, REGISTRATION},
 };
 
 struct MockTelegramBot;
@@ -56,13 +61,27 @@ impl TelegramBotProvider for MockTelegramBot {
     ) -> Result<TelegramChat, TelegramBotError> {
         assert_eq!(credential.expose_secret(), "mock-telegram-bot-token");
         Ok(TelegramChat {
-            id: request.chat_id,
+            id: request.chat_id.numeric().unwrap_or(123),
             kind: TelegramChatKind::Private,
             title: None,
             username: Some("mock_chat".to_string()),
             first_name: Some("Mock".to_string()),
             last_name: None,
             description: None,
+        })
+    }
+
+    async fn get_updates(
+        &self,
+        credential: &ProviderCredential,
+        request: GetUpdatesRequest,
+    ) -> Result<TelegramUpdates, TelegramBotError> {
+        assert_eq!(credential.expose_secret(), "mock-telegram-bot-token");
+        assert_eq!(request.offset, None);
+        Ok(TelegramUpdates {
+            updates: vec![],
+            next_offset: Some(42),
+            ignored_update_count: 0,
         })
     }
 
@@ -75,7 +94,7 @@ impl TelegramBotProvider for MockTelegramBot {
         assert_eq!(request.parse_mode, Some(TelegramParseMode::MarkdownV2));
         Ok(TelegramMessage {
             message_id: 7,
-            chat_id: request.chat_id,
+            chat_id: request.chat_id.numeric().unwrap_or(123),
             date_unix_seconds: 1_700_000_000,
             text: Some(request.text),
         })
@@ -126,12 +145,22 @@ fn exposes_expected_tools() {
     names.sort();
     assert_eq!(
         names,
-        vec![
-            "telegram_get_chat",
-            "telegram_get_me",
-            "telegram_send_message"
-        ]
+        vec!["get_chat", "get_me", "get_updates", "send_message"]
     );
+}
+
+#[test]
+fn registration_declares_generic_workspace_credential_metadata() {
+    let requirements = REGISTRATION
+        .credential_requirements()
+        .expect("the server requires a workspace credential");
+
+    assert_eq!(requirements.secret_field, "bot_token");
+    assert_eq!(requirements.fields.len(), 1);
+    assert_eq!(requirements.fields[0].key, "bot_token");
+    assert!(serde_json::to_string(&requirements)
+        .expect("credential metadata is serializable")
+        .contains("Bot token"));
 }
 
 #[tokio::test]
@@ -141,7 +170,7 @@ async fn provider_receives_host_injected_credential() {
         .call_tool(
             &context(),
             CallToolParams {
-                name: "telegram_get_me".to_string(),
+                name: "get_me".to_string(),
                 arguments: None,
             },
         )
@@ -151,10 +180,32 @@ async fn provider_receives_host_injected_credential() {
 }
 
 #[tokio::test]
+async fn retrieves_update_cursor_for_chat_discovery() {
+    let server = TelegramBotServer::new(Arc::new(MockTelegramBot)).unwrap();
+    let result = server
+        .call_tool(
+            &context(),
+            CallToolParams {
+                name: "get_updates".to_string(),
+                arguments: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let updates = result
+        .structured_content
+        .expect("update lookup returns structured content")
+        .decode::<TelegramUpdates>()
+        .expect("update lookup response should be typed");
+    assert_eq!(updates.next_offset, Some(42));
+}
+
+#[tokio::test]
 async fn validates_and_dispatches_send_message() {
     let server = TelegramBotServer::new(Arc::new(MockTelegramBot)).unwrap();
     let arguments = JsonPayload::from_serializable(&SendMessageRequest {
-        chat_id: 123,
+        chat_id: TelegramChatId::Numeric(123),
         text: "hello".to_string(),
         parse_mode: Some(TelegramParseMode::MarkdownV2),
     })
@@ -163,7 +214,7 @@ async fn validates_and_dispatches_send_message() {
         .call_tool(
             &context(),
             CallToolParams {
-                name: "telegram_send_message".to_string(),
+                name: "send_message".to_string(),
                 arguments: Some(arguments),
             },
         )
@@ -176,7 +227,7 @@ async fn validates_and_dispatches_send_message() {
 async fn rejects_empty_message_text() {
     let server = TelegramBotServer::new(Arc::new(MockTelegramBot)).unwrap();
     let arguments = JsonPayload::from_serializable(&SendMessageRequest {
-        chat_id: 123,
+        chat_id: TelegramChatId::Numeric(123),
         text: " ".to_string(),
         parse_mode: None,
     })
@@ -185,11 +236,33 @@ async fn rejects_empty_message_text() {
         .call_tool(
             &context(),
             CallToolParams {
-                name: "telegram_send_message".to_string(),
+                name: "send_message".to_string(),
                 arguments: Some(arguments),
             },
         )
         .await
         .unwrap_err();
     assert!(matches!(error, ServerError::InvalidArguments(_)));
+}
+
+#[tokio::test]
+async fn accepts_public_channel_usernames() {
+    let server = TelegramBotServer::new(Arc::new(MockTelegramBot)).unwrap();
+    let arguments = JsonPayload::from_serializable(&SendMessageRequest {
+        chat_id: TelegramChatId::Username("@example_channel".to_string()),
+        text: "hello".to_string(),
+        parse_mode: Some(TelegramParseMode::MarkdownV2),
+    })
+    .unwrap();
+    let result = server
+        .call_tool(
+            &context(),
+            CallToolParams {
+                name: "send_message".to_string(),
+                arguments: Some(arguments),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!result.is_error);
 }

@@ -5,7 +5,7 @@ use mcp_sdk::{
     schemas::{
         context::RequestContext,
         tool_definition::{ToolAnnotations, ToolDefinition},
-        tool_schema::{ToolInputProperty, ToolInputSchema, ToolInputType},
+        tool_schema::{ToolInputProperty, ToolInputSchema},
     },
     traits::server::ToolHandler,
 };
@@ -14,45 +14,38 @@ use std::sync::Arc;
 use crate::{
     handlers::common::{authorize_and_credential, decode_arguments, provider_error, success},
     providers::telegram_bot::TelegramBotProvider,
-    schemas::requests::{SendMessageRequest, MAX_MESSAGE_TEXT_LENGTH},
+    schemas::requests::GetUpdatesRequest,
 };
 
-pub const TOOL_NAME: &str = "send_message";
+pub const TOOL_NAME: &str = "get_updates";
 
 const INPUT_SCHEMA: ToolInputSchema = ToolInputSchema::object(
-    &["chat_id", "text"],
+    &[],
     &[
-        ToolInputProperty::one_of(
-            "chat_id",
-            &[
-                ToolInputType::integer(None, None),
-                ToolInputType::string(Some(1), Some(64), &[]),
-            ],
-        ),
-        ToolInputProperty::string("text", Some(1), Some(MAX_MESSAGE_TEXT_LENGTH)),
-        ToolInputProperty::string_enum("parse_mode", &["markdown_v2", "html"]),
+        ToolInputProperty::integer("offset", None, None),
+        ToolInputProperty::integer("limit", Some(1), Some(100)),
     ],
 );
 
-pub struct SendMessageHandler {
+pub struct GetUpdatesHandler {
     provider: Arc<dyn TelegramBotProvider>,
 }
 
-impl SendMessageHandler {
+impl GetUpdatesHandler {
     pub fn new(provider: Arc<dyn TelegramBotProvider>) -> Self {
         Self { provider }
     }
 }
 
 #[async_trait]
-impl ToolHandler for SendMessageHandler {
+impl ToolHandler for GetUpdatesHandler {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: TOOL_NAME.to_string(),
-            description: "Send a text message through the configured bot. Use a numeric chat ID (including -100... IDs) or a public channel username such as @example_channel.".to_string(),
+            description: "Read pending bot updates and return exact chat IDs from messages and channel posts. Use next_offset in a later call to acknowledge the returned updates.".to_string(),
             input_schema: INPUT_SCHEMA,
             annotations: ToolAnnotations {
-                read_only_hint: Some(false),
+                read_only_hint: Some(true),
             },
         }
     }
@@ -62,16 +55,21 @@ impl ToolHandler for SendMessageHandler {
         context: &RequestContext,
         arguments: Option<JsonPayload>,
     ) -> Result<CallToolResult, ServerError> {
-        let request = decode_arguments::<SendMessageRequest>(arguments)?;
+        let request = match arguments {
+            Some(arguments) => decode_arguments(Some(arguments))?,
+            None => GetUpdatesRequest::default(),
+        };
         request.validate().map_err(ServerError::InvalidArguments)?;
         let credential =
-            authorize_and_credential(context, TOOL_NAME, "Telegram Bot API message delivery")
-                .await?;
+            authorize_and_credential(context, TOOL_NAME, "Telegram Bot API update lookup").await?;
         let result = self
             .provider
-            .send_message(&credential, request)
+            .get_updates(&credential, request)
             .await
             .map_err(provider_error)?;
-        success("Sent Telegram message.".to_string(), &result)
+        success(
+            "Retrieved Telegram bot updates and chat IDs.".to_string(),
+            &result,
+        )
     }
 }

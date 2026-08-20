@@ -6,11 +6,13 @@ private application services.
 
 ## Tools
 
-- `telegram_get_me` returns the configured bot identity and Bot API capability
+- `get_me` returns the configured bot identity and Bot API capability
   flags. This is read-only.
-- `telegram_get_chat` returns metadata for a chat accessible to the bot. This
+- `get_chat` returns metadata for a chat accessible to the bot. This
   is read-only.
-- `telegram_send_message` sends a text message to an accessible chat. This is
+- `get_updates` retrieves pending bot updates for chat discovery. This is
+  read-only.
+- `send_message` sends a text message to an accessible chat. This is
   a mutation and requires host approval.
 
 Message results include the Telegram message ID, chat ID, Unix timestamp, and
@@ -31,16 +33,16 @@ README.
 
 ## Usage
 
-Call `telegram_send_message` through the MCP transport with `chat_id`, `text`,
+Call `send_message` through the MCP transport with `chat_id`, `text`,
 and optional `parse_mode` business arguments. `parse_mode` accepts
 `markdown_v2` or `html`. If omitted, Telegram receives plain text. MarkdownV2
 escaping and HTML supported-tag rules remain the caller’s responsibility.
 
 The host evaluates authorization before every provider call and approval before
-`telegram_send_message`. Telegram API failures are mapped to MCP provider
-errors. This package currently provides synchronous Bot API tools only; update
-polling, webhooks, message history, media, listener persistence, notification
-routing, and Telegram user-client authentication are out of scope.
+`send_message`. Telegram API failures are mapped to MCP provider errors. This
+package provides synchronous Bot API tools; webhooks, message history, media,
+listener persistence, notification routing, and Telegram user-client
+authentication are out of scope.
 
 ## Tests
 

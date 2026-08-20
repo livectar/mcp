@@ -36,6 +36,10 @@ pub enum ToolInputProperty {
         name: &'static str,
         schema: &'static ToolInputSchema,
     },
+    OneOf {
+        name: &'static str,
+        variants: &'static [ToolInputType],
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -132,6 +136,10 @@ impl ToolInputProperty {
         Self::Object { name, schema }
     }
 
+    pub const fn one_of(name: &'static str, variants: &'static [ToolInputType]) -> Self {
+        Self::OneOf { name, variants }
+    }
+
     const fn name(self) -> &'static str {
         match self {
             Self::String { name, .. }
@@ -139,7 +147,8 @@ impl ToolInputProperty {
             | Self::Number { name, .. }
             | Self::Boolean { name }
             | Self::Array { name, .. }
-            | Self::Object { name, .. } => name,
+            | Self::Object { name, .. }
+            | Self::OneOf { name, .. } => name,
         }
     }
 }
@@ -215,6 +224,9 @@ impl Serialize for ToolInputProperty {
                     map.serialize_entry("required", schema.required)?;
                 }
                 map.serialize_entry("additionalProperties", &false)?;
+            }
+            Self::OneOf { variants, .. } => {
+                map.serialize_entry("oneOf", variants)?;
             }
         }
         map.end()
@@ -411,7 +423,7 @@ impl Serialize for ToolInputProperties {
 
 #[cfg(test)]
 mod tests {
-    use super::{ToolInputProperty, ToolInputSchema};
+    use super::{ToolInputProperty, ToolInputSchema, ToolInputType};
 
     const SCHEMA: ToolInputSchema = ToolInputSchema::object(
         &["spreadsheet_id"],
@@ -425,6 +437,17 @@ mod tests {
         ],
     );
 
+    const CHAT_SCHEMA: ToolInputSchema = ToolInputSchema::object(
+        &["chat_id"],
+        &[ToolInputProperty::one_of(
+            "chat_id",
+            &[
+                ToolInputType::integer(None, None),
+                ToolInputType::string(Some(1), Some(64), &[]),
+            ],
+        )],
+    );
+
     #[test]
     fn serializes_a_typed_object_schema() {
         let payload = SCHEMA.to_json_payload().unwrap();
@@ -432,6 +455,16 @@ mod tests {
         assert_eq!(
             payload.as_str(),
             r#"{"type":"object","required":["spreadsheet_id"],"properties":{"spreadsheet_id":{"type":"string","minLength":1,"maxLength":256},"value_rendering":{"type":"string","enum":["formatted","unformatted","formula"]},"max_cells":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}"#
+        );
+    }
+
+    #[test]
+    fn serializes_a_typed_union_property() {
+        let payload = CHAT_SCHEMA.to_json_payload().unwrap();
+
+        assert_eq!(
+            payload.as_str(),
+            r#"{"type":"object","required":["chat_id"],"properties":{"chat_id":{"oneOf":[{"type":"integer"},{"type":"string","minLength":1,"maxLength":64}]}},"additionalProperties":false}"#
         );
     }
 }

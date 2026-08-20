@@ -5,7 +5,7 @@ use mcp_sdk::{
     schemas::{
         context::RequestContext,
         tool_definition::{ToolAnnotations, ToolDefinition},
-        tool_schema::{ToolInputProperty, ToolInputSchema},
+        tool_schema::{ToolInputProperty, ToolInputSchema, ToolInputType},
     },
     traits::server::ToolHandler,
 };
@@ -17,11 +17,17 @@ use crate::{
     schemas::requests::GetChatRequest,
 };
 
-pub const TOOL_NAME: &str = "telegram_get_chat";
+pub const TOOL_NAME: &str = "get_chat";
 
 const INPUT_SCHEMA: ToolInputSchema = ToolInputSchema::object(
     &["chat_id"],
-    &[ToolInputProperty::integer("chat_id", None, None)],
+    &[ToolInputProperty::one_of(
+        "chat_id",
+        &[
+            ToolInputType::integer(None, None),
+            ToolInputType::string(Some(1), Some(64), &[]),
+        ],
+    )],
 );
 
 pub struct GetChatHandler {
@@ -39,7 +45,7 @@ impl ToolHandler for GetChatHandler {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: TOOL_NAME.to_string(),
-            description: "Return metadata for a Telegram chat accessible to the bot.".to_string(),
+            description: "Return metadata for a chat accessible to the bot. Use a numeric chat ID (including -100... IDs) or a public channel username such as @example_channel.".to_string(),
             input_schema: INPUT_SCHEMA,
             annotations: ToolAnnotations {
                 read_only_hint: Some(true),
@@ -53,6 +59,7 @@ impl ToolHandler for GetChatHandler {
         arguments: Option<JsonPayload>,
     ) -> Result<CallToolResult, ServerError> {
         let request = decode_arguments::<GetChatRequest>(arguments)?;
+        request.validate().map_err(ServerError::InvalidArguments)?;
         let credential =
             authorize_and_credential(context, TOOL_NAME, "Telegram Bot API chat lookup").await?;
         let result = self
