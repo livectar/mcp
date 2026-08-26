@@ -17,7 +17,7 @@ impl McpTransport {
         let request_limit = self.state.limits.max_request_bytes;
         Router::new()
             .route(
-                "/mcp/:server_key",
+                "/mcp/{server_key}",
                 post(routes::post).get(routes::get).delete(routes::delete),
             )
             .layer(axum::extract::DefaultBodyLimit::max(request_limit))
